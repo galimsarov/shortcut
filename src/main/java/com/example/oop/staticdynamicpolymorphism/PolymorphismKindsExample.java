@@ -18,7 +18,7 @@ public final class PolymorphismKindsExample {
         Printer printer = new Printer();
 
         // Статический полиморфизм: у метода print две сигнатуры.
-        System.out.println(printer.print("Привет"));
+        System.out.println(printer.print("Hello!"));
         System.out.println(printer.print(42));
 
         // Динамический полиморфизм: ссылка базового типа смотрит на наследника.

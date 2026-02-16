@@ -21,9 +21,9 @@ public final class BasicOopExample {
         System.out.println("Баланс счёта " + account.getNumber() + ": " + account.getBalance());
 
         // Наследование + полиморфизм.
-        Animal animal = new Cat("Мурка"); // ссылка базового типа
-        System.out.println("Животное: " + animal.getName());
-        System.out.println("Звук: " + animal.makeSound()); // вызов переопределённого метода Cat
+        Animal animal = new Cat("Murka"); // ссылка базового типа
+        System.out.println("Animal: " + animal.getName());
+        System.out.println("Sound: " + animal.makeSound()); // вызов переопределённого метода Cat
     }
 
     static class BankAccount {
@@ -81,7 +81,7 @@ public final class BasicOopExample {
 
         @Override
         public String makeSound() {
-            return "Мяу";
+            return "Miau";
         }
     }
 }

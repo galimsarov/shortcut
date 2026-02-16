@@ -20,12 +20,12 @@ public final class MethodBehaviorExample {
         Base baseRefToChild = new Child();
         Child child = new Child();
 
-        System.out.println("Обычные методы:");
+        System.out.println("Common methods:");
         System.out.println("base.whoAmI() -> " + base.whoAmI());
         System.out.println("baseRefToChild.whoAmI() -> " + baseRefToChild.whoAmI());
         System.out.println("child.whoAmI() -> " + child.whoAmI());
 
-        System.out.println("\nСтатические методы:");
+        System.out.println("\nStatic methods:");
         // Важно: выбор происходит по ТИПУ ССЫЛКИ, а не объекта.
         System.out.println("Base.role() -> " + Base.role());
         System.out.println("Child.role() -> " + Child.role());
