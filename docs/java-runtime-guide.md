@@ -238,3 +238,243 @@ java -Xms1g -Xmx1g -XX:+UseG1GC -Xlog:gc -Dspring.profiles.active=prod -jar app.
 - JIT ускоряет hot spots во время работы.
 - Память Java не сводится только к heap; утечки в Java чаще всего связаны с удержанием ссылок.
 - JVM-флаги критичны для производительности и стабильности в проде.
+
+---
+
+## 7) Сборщик мусора (GC) в Java: виды, принципы, G1 и ссылки
+
+### 7.1 Базовые принципы работы GC
+
+GC в Java освобождает память **автоматически**: удаляет объекты, которые больше не достижимы из GC Roots.
+
+Что такое GC Roots (упрощенно):
+
+- локальные переменные в стеках потоков,
+- активные потоки,
+- static-поля загруженных классов,
+- JNI-ссылки из нативного кода.
+
+Если от roots до объекта нельзя пройти по ссылкам — объект считается мусором и может быть удален.
+
+Пример:
+
+```java
+public class GcBasicExample {
+    static class User {
+        String name;
+        User(String name) { this.name = name; }
+    }
+
+    public static void main(String[] args) {
+        User u = new User("Alice");
+        // объект достижим через локальную переменную u
+
+        u = null;
+        // после этой строки объект недостижим и может быть собран GC
+
+        System.gc(); // только просьба к JVM, а не гарантия немедленного GC
+    }
+}
+```
+
+Ключевая идея поколений (Generational hypothesis):
+
+- большинство объектов "живут" недолго,
+- поэтому heap делится на поколения: Young и Old,
+- часто чистим Young (быстро), реже — Old (дороже).
+
+---
+
+### 7.2 Виды GC в HotSpot JVM
+
+Ниже — упрощенная практическая картина (актуальность зависит от версии JDK):
+
+1. **Serial GC** (`-XX:+UseSerialGC`)
+   - Один поток GC, простейший, stop-the-world.
+   - Подходит для маленьких heap/простых сред.
+
+2. **Parallel GC** (`-XX:+UseParallelGC`)
+   - Несколько потоков GC, ориентирован на throughput.
+   - Паузы могут быть длиннее, чем у low-pause коллекторов.
+
+3. **G1 GC** (`-XX:+UseG1GC`)
+   - Делит heap на регионы, собирает их приоритетно.
+   - Цель: предсказуемые паузы при большом heap.
+   - Часто дефолт в современных JDK.
+
+4. **ZGC** (`-XX:+UseZGC`)
+   - Очень короткие паузы, масштабируется на большие heap.
+   - Подходит для latency-sensitive сервисов.
+
+5. **Shenandoah** (`-XX:+UseShenandoahGC`)
+   - Тоже low-pause, конкурентная очистка.
+   - Доступность зависит от сборки/дистрибутива JDK.
+
+Мини-пример запуска с разными GC:
+
+```bash
+java -Xms1g -Xmx1g -XX:+UseSerialGC App
+java -Xms1g -Xmx1g -XX:+UseParallelGC App
+java -Xms1g -Xmx1g -XX:+UseG1GC App
+```
+
+---
+
+### 7.3 Подробный разбор G1 GC
+
+G1 = Garbage First, потому что он старается сначала собирать регионы, где можно освободить больше памяти за меньшую цену.
+
+#### Как G1 организует память
+
+- Heap разбивается на множество **regions** одинакового размера (например, 1–32 MB).
+- Логически регионы могут быть Eden, Survivor, Old, Humongous.
+- Нет жесткого физического деления как в старых схемах "сплошной Young/Old".
+
+#### Ключевые циклы G1
+
+1. **Young GC (эвакуация)**
+   - Stop-the-world пауза.
+   - Живые объекты из Eden/Survivor копируются в новые Survivor или Old.
+   - Мусор просто не копируется.
+
+2. **Concurrent Marking (конкурентная маркировка Old)**
+   - G1 параллельно с приложением оценивает живые объекты в old-регионах.
+   - Формирует карту "где сколько мусора".
+
+3. **Mixed GC**
+   - После маркировки G1 делает паузы, где очищает не только Young, но и часть Old-регионов с наибольшей выгодой.
+   - Именно тут проявляется "Garbage First".
+
+4. **Remark / Cleanup**
+   - Короткие фазы для финализации результатов маркировки и обновления служебных структур.
+
+#### Почему G1 предсказуемее по паузам
+
+- Можно задавать целевую паузу: `-XX:MaxGCPauseMillis=200` (не строгая гарантия, а цель).
+- G1 выбирает набор регионов на сборку с учетом модели стоимости паузы.
+
+#### Важные параметры G1
+
+```bash
+java \
+  -Xms2g -Xmx2g \
+  -XX:+UseG1GC \
+  -XX:MaxGCPauseMillis=200 \
+  -XX:InitiatingHeapOccupancyPercent=45 \
+  -Xlog:gc*:file=gc.log \
+  -jar app.jar
+```
+
+- `MaxGCPauseMillis` — целевая длительность паузы.
+- `InitiatingHeapOccupancyPercent` — порог заполнения heap для старта concurrent marking.
+- `-Xlog:gc*` — подробные GC-логи.
+
+#### Мини-сценарий "что происходит"
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+public class G1BehaviorDemo {
+    public static void main(String[] args) {
+        List<byte[]> list = new ArrayList<>();
+
+        for (int i = 0; i < 10_000; i++) {
+            // короткоживущие объекты
+            byte[] tmp = new byte[1024 * 50];
+
+            // часть объектов делаем долгоживущими
+            if (i % 100 == 0) {
+                list.add(new byte[1024 * 200]);
+            }
+
+            if (i % 500 == 0) {
+                System.out.println("step=" + i + ", retained=" + list.size());
+            }
+        }
+    }
+}
+```
+
+- Большинство `tmp` умрет в Young GC.
+- Объекты в `list` переживают несколько циклов и продвигаются в Old.
+- При накоплении мусора в Old G1 запускает concurrent marking и mixed GC.
+
+---
+
+### 7.4 Виды ссылок в Java (Reference Types)
+
+В Java, кроме обычных (strong) ссылок, есть специальные типы в `java.lang.ref`.
+
+1. **Strong reference** (обычная ссылка)
+   - Пока есть strong-ссылка, объект не удаляется.
+
+```java
+Object strong = new Object();
+```
+
+2. **SoftReference**
+   - Объект может быть удален при нехватке памяти.
+   - Исторически использовалась для memory-sensitive cache.
+
+```java
+import java.lang.ref.SoftReference;
+
+SoftReference<byte[]> soft = new SoftReference<>(new byte[1024 * 1024]);
+byte[] data = soft.get(); // может быть null после GC под давлением памяти
+```
+
+3. **WeakReference**
+   - Объект удаляется при ближайшем GC, если нет strong-ссылок.
+   - Часто применяется в структурах наподобие `WeakHashMap`.
+
+```java
+import java.lang.ref.WeakReference;
+
+Object obj = new Object();
+WeakReference<Object> weak = new WeakReference<>(obj);
+obj = null;
+System.gc();
+System.out.println(weak.get()); // часто null (но не гарантировано немедленно)
+```
+
+4. **PhantomReference**
+   - `get()` всегда возвращает `null`.
+   - Используется вместе с `ReferenceQueue` для пост-мортем уведомлений (после недостижимости объекта), например, контроль cleanup ресурсов.
+
+```java
+import java.lang.ref.PhantomReference;
+import java.lang.ref.ReferenceQueue;
+
+Object target = new Object();
+ReferenceQueue<Object> queue = new ReferenceQueue<>();
+PhantomReference<Object> phantom = new PhantomReference<>(target, queue);
+
+target = null;
+System.gc();
+// затем можно проверять queue.poll()/remove() и выполнять cleanup-логику
+```
+
+Практический ориентир:
+
+- для обычной логики приложения — strong ссылки,
+- для ассоциативных структур "не мешать GC" — weak,
+- для специальных сценариев кэша — soft (с осторожностью),
+- для контроля жизненного цикла с очередью ссылок — phantom.
+
+---
+
+### 7.5 Что полезно смотреть в проде
+
+- частоту и длительность пауз GC,
+- динамику heap occupancy до/после GC,
+- скорость аллокаций,
+- promotion rate (переход из Young в Old),
+- full GC (если появляются часто — это тревожный сигнал).
+
+Быстрый старт логирования:
+
+```bash
+java -Xlog:gc*,safepoint:file=gc.log:time,uptime,level,tags -jar app.jar
+```
+
