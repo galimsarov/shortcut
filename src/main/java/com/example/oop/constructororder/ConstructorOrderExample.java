@@ -15,10 +15,10 @@ public final class ConstructorOrderExample {
     }
 
     public static void demo() {
-        System.out.println("Создаём первый объект Child:");
+        System.out.println("Creating first object Child:");
         new Child();
 
-        System.out.println("\nСоздаём второй объект Child:");
+        System.out.println("\nCreating second object Child:");
         new Child();
     }
 
