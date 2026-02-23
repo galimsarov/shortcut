@@ -789,3 +789,127 @@ PhantomReference<String> phantomRef = new PhantomReference<>(new String("Phantom
 java -Xlog:gc*,safepoint:file=gc.log:time,uptime,level,tags -jar app.jar
 ```
 
+---
+
+## 8) Абстрактные классы и интерфейсы
+
+### Главное отличие (когда что использовать)
+
+Используй интерфейс, когда:
+- Нужна роль/возможность: Runnable, Comparable, Serializable.
+- Нужно «подмешать» поведение в разные несвязанные классы.
+- Важна множественная реализация контрактов.
+
+Используй абстрактный класс, когда:
+- Есть общая база и состояние для группы похожих классов.
+- Нужна частичная реализация «из коробки».
+- Есть тесная иерархия is-a (например, Animal -> Dog/Cat).
+
+---
+
+## 🤔 Как ты можешь описать абстракцию?
+
+Это принцип объектно-ориентированного программирования (ООП), который скрывает детали реализации объекта и показывает только его наиболее важные характеристики. Она позволяет сосредоточиться на сущности объекта, игнорируя его внутреннюю сложность.
+
+🚩Абстракция
+
+В Java абстракция достигается через:
+- Абстрактные классы
+- Интерфейсы
+
+### Абстрактные классы
+Абстрактный класс — это класс, который не может быть создан напрямую, но может содержать:
+- Абстрактные методы (без реализации, только сигнатуры);
+- Обычные методы (с реализацией).
+Используется, если вы хотите описать общее поведение для группы классов, но часть поведения оставить на усмотрение конкретных подклассов.
+```java
+abstract class Animal {
+    // Абстрактный метод — реализуется в подклассах
+    abstract void makeSound();
+
+    // Обычный метод
+    void eat() {
+        System.out.println("This animal eats food.");
+    }
+}
+
+class Dog extends Animal {
+    @Override
+    void makeSound() {
+        System.out.println("Woof!");
+    }
+}
+
+class Cat extends Animal {
+    @Override
+    void makeSound() {
+        System.out.println("Meow!");
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Animal dog = new Dog();
+        dog.makeSound(); // Woof!
+        dog.eat();       // This animal eats food.
+
+        Animal cat = new Cat();
+        cat.makeSound(); // Meow!
+    }
+}
+```
+### Интерфейсы
+Интерфейс — это чистый контракт, который определяет набор методов, которые класс должен реализовать.
+В отличие от абстрактного класса:
+- Интерфейс не может содержать полей (кроме static final).
+- Класс может реализовать несколько интерфейсов (множественное наследование).
+```java
+interface Vehicle {
+    void start(); // метод без реализации
+    void stop();
+}
+
+class Car implements Vehicle {
+    @Override
+    public void start() {
+        System.out.println("Car is starting.");
+    }
+
+    @Override
+    public void stop() {
+        System.out.println("Car is stopping.");
+    }
+}
+
+class Bike implements Vehicle {
+    @Override
+    public void start() {
+        System.out.println("Bike is starting.");
+    }
+
+    @Override
+    public void stop() {
+        System.out.println("Bike is stopping.");
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Vehicle car = new Car();
+        car.start(); // Car is starting.
+        car.stop();  // Car is stopping.
+
+        Vehicle bike = new Bike();
+        bike.start(); // Bike is starting.
+        bike.stop();  // Bike is stopping.
+    }
+}
+```
+🚩Почему важна абстракция?
+
+- Скрытие сложностей. Программистам не нужно знать все детали реализации объекта. Они работают только с его интерфейсом.
+- Упрощение понимания. Код становится понятным и модульным, так как мы сосредоточиваемся на важной логике.
+- Повторное использование. Абстракция позволяет использовать один и тот же код для разных объектов.
+- Гибкость и поддержка. Если нужно изменить реализацию, это не затронет остальную часть программы (если она работает через абстрактный контракт).
+
+Ставь 👍 (https://t.me/eo_test_task_bot) и забирай 📚  (https://t.me/eo_test_task_bot)Базу знаний (https://t.me/easy_java_ru/548)
