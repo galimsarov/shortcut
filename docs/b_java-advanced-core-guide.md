@@ -682,6 +682,7 @@ LinkedHashMap — это реализация интерфейса Map, кото
 - Скорость: LinkedHashMap немного медленнее HashMap из-за поддержания порядка элементов.
 
 ✅ Java библиотека (https://t.me/javalib) #java
+
 ---
 
 ### 2.9 `ConcurrentHashMap`
@@ -906,3 +907,145 @@ public class ListPerfSketch {
 - отдельный блок про **fail-fast / fail-safe** итераторы;
 - блок про **immutable коллекции** (`List.of`, `Map.of`, `Collectors.toUnmodifiableList`);
 - готовые «шаблоны выбора» для типовых задач (кэш, дедупликация, leaderboard, event listeners).
+
+---
+
+## 6) `Comparable` и `Comparator` в Java: в чём разница и как применять
+
+Оба интерфейса отвечают за сравнение объектов, но используются в разных сценариях:
+
+- `Comparable<T>` — **естественный порядок** внутри самого класса.
+- `Comparator<T>` — **внешняя стратегия сортировки**, когда порядков может быть несколько.
+
+### 6.1 `Comparable`: «класс умеет сравнивать сам себя»
+
+```java
+import java.util.*;
+
+class Student implements Comparable<Student> {
+    private final String name;
+    private final int score;
+
+    Student(String name, int score) {
+        this.name = name;
+        this.score = score;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public int getScore() {
+        return score;
+    }
+
+    @Override
+    public int compareTo(Student other) {
+        // естественный порядок: по score (по возрастанию)
+        return Integer.compare(this.score, other.score);
+    }
+
+    @Override
+    public String toString() {
+        return name + "(" + score + ")";
+    }
+}
+
+public class ComparableDemo {
+    public static void main(String[] args) {
+        List<Student> students = new ArrayList<>(List.of(
+                new Student("Mila", 92),
+                new Student("Artem", 81),
+                new Student("Ira", 92)
+        ));
+
+        Collections.sort(students); // использует compareTo
+        System.out.println(students); // [Artem(81), Mila(92), Ira(92)]
+    }
+}
+```
+
+Когда подходит `Comparable`:
+- у сущности есть один «дефолтный» порядок (например, `LocalDate`, `String`, `Integer`);
+- этот порядок логично сделать частью модели.
+
+### 6.2 `Comparator`: «сортируем по-разному в зависимости от задачи»
+
+```java
+import java.util.*;
+
+class Student {
+    private final String name;
+    private final int score;
+    private final int age;
+
+    Student(String name, int score, int age) {
+        this.name = name;
+        this.score = score;
+        this.age = age;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public int getScore() {
+        return score;
+    }
+
+    public int getAge() {
+        return age;
+    }
+
+    @Override
+    public String toString() {
+        return name + "(" + score + ", " + age + ")";
+    }
+}
+
+public class ComparatorDemo {
+    public static void main(String[] args) {
+        List<Student> students = new ArrayList<>(List.of(
+                new Student("Mila", 92, 20),
+                new Student("Artem", 81, 19),
+                new Student("Ira", 92, 18)
+        ));
+
+        // 1) По score по убыванию
+        students.sort(Comparator.comparingInt(Student::getScore).reversed());
+        System.out.println("By score desc: " + students);
+
+        // 2) По name по возрастанию
+        students.sort(Comparator.comparing(Student::getName));
+        System.out.println("By name asc: " + students);
+
+        // 3) Сложный порядок: score desc, затем age asc
+        students.sort(
+                Comparator.comparingInt(Student::getScore).reversed()
+                        .thenComparingInt(Student::getAge)
+        );
+        System.out.println("By score desc, age asc: " + students);
+    }
+}
+```
+
+Когда подходит `Comparator`:
+- нужно несколько вариантов сортировки;
+- не хотите менять исходный класс;
+- сортируете внешний тип (например, из библиотеки).
+
+### 6.3 Важные правила для корректного сравнения
+
+1. **Антисимметрия**: знак `a.compareTo(b)` должен быть противоположен знаку `b.compareTo(a)`.
+2. **Транзитивность**: если `a > b` и `b > c`, то `a > c`.
+3. **Согласованность с equals** (особенно важно для `TreeSet/TreeMap`):
+   - если `compare(...) == 0`, объекты считаются одинаковыми с точки зрения сортированной структуры.
+
+Пример проблемы:
+- если в `TreeSet` сравнивать `Student` только по `score`, то два разных студента с одинаковым `score` будут считаться «дубликатом», и один из них не добавится.
+
+### 6.4 Мини-шпаргалка
+
+- Нужен **один естественный порядок** → `Comparable`.
+- Нужны **разные варианты сортировки** → `Comparator`.
+- Часто используют оба подхода: `Comparable` как базовый порядок + `Comparator` под конкретные кейсы.
