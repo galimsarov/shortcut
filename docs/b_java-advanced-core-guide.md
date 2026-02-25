@@ -1049,3 +1049,344 @@ public class ComparatorDemo {
 - Нужен **один естественный порядок** → `Comparable`.
 - Нужны **разные варианты сортировки** → `Comparator`.
 - Часто используют оба подхода: `Comparable` как базовый порядок + `Comparator` под конкретные кейсы.
+
+---
+
+## 4) Исключения в Java: иерархия, обработка и практические примеры
+
+Исключения в Java — это механизм для обработки аномальных ситуаций во время выполнения программы.
+
+Базовая идея:
+- «Нормальный путь» кода остаётся читаемым.
+- «Ошибочный путь» можно централизованно обработать.
+
+### 4.1 Иерархия исключений
+
+Корень иерархии — `Throwable`.
+
+```text
+Throwable
+ ├─ Error
+ │   ├─ OutOfMemoryError
+ │   ├─ StackOverflowError
+ │   └─ ...
+ └─ Exception
+     ├─ RuntimeException
+     │   ├─ NullPointerException
+     │   ├─ IllegalArgumentException
+     │   ├─ IllegalStateException
+     │   ├─ IndexOutOfBoundsException
+     │   └─ ...
+     └─ (checked exceptions)
+         ├─ IOException
+         ├─ SQLException
+         ├─ ParseException
+         └─ ...
+```
+
+Ключевой вывод:
+- `Exception` — то, что в большинстве случаев ожидаемо обрабатывается приложением.
+- `Error` — серьёзные проблемы JVM/окружения, обычно не предназначены для «бизнес-обработки».
+
+---
+
+### 4.2 Checked / Unchecked / Error
+
+#### Checked exceptions
+Это исключения, которые **обязаны быть либо пойманы (`catch`), либо объявлены (`throws`)**.
+
+```java
+import java.io.IOException;
+
+public class CheckedExample {
+    static String readConfig() throws IOException {
+        throw new IOException("config file not found");
+    }
+
+    public static void main(String[] args) {
+        try {
+            String config = readConfig();
+            System.out.println(config);
+        } catch (IOException e) {
+            System.out.println("Не удалось прочитать конфиг: " + e.getMessage());
+        }
+    }
+}
+```
+
+Когда полезны: для recoverable-сценариев (например, I/O, сеть, интеграции).
+
+#### Unchecked exceptions (`RuntimeException`)
+Компилятор не заставляет их обрабатывать.
+
+```java
+public class UncheckedExample {
+    static int divide(int a, int b) {
+        if (b == 0) {
+            throw new IllegalArgumentException("b must not be 0");
+        }
+        return a / b;
+    }
+
+    public static void main(String[] args) {
+        System.out.println(divide(10, 2));
+        // System.out.println(divide(10, 0)); // IllegalArgumentException
+    }
+}
+```
+
+Когда полезны: ошибки валидации, ошибки контракта API, неверное состояние объекта.
+
+#### `Error`
+`Error` обычно не ловят в прикладной логике.
+
+```java
+public class ErrorNote {
+    public static void main(String[] args) {
+        // Не делайте так в прод-коде:
+        // try { ... } catch (OutOfMemoryError e) { ... }
+        // Обычно правильнее предотвратить причину и мониторить JVM.
+    }
+}
+```
+
+---
+
+### 4.3 `try/catch/finally` и `try-with-resources`
+
+#### Базовый `try/catch/finally`
+
+```java
+public class TryCatchFinallyExample {
+    public static void main(String[] args) {
+        try {
+            System.out.println("Открываем операцию");
+            int x = 10 / 0;
+            System.out.println(x);
+        } catch (ArithmeticException e) {
+            System.out.println("Поймали арифметическую ошибку: " + e.getMessage());
+        } finally {
+            System.out.println("finally выполнится почти всегда (очистка ресурсов)");
+        }
+    }
+}
+```
+
+`finally` обычно используют для освобождения ресурсов, если не применили `try-with-resources`.
+
+#### `try-with-resources`
+Рекомендуемый способ работы с ресурсами (`Closeable`/`AutoCloseable`).
+
+```java
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+
+public class TryWithResourcesExample {
+    public static void main(String[] args) {
+        try (BufferedReader br = new BufferedReader(new FileReader("app.properties"))) {
+            System.out.println(br.readLine());
+        } catch (IOException e) {
+            System.out.println("Ошибка чтения файла: " + e.getMessage());
+        }
+    }
+}
+```
+
+Плюс: ресурс закрывается автоматически, даже если в блоке `try` возникло исключение.
+
+---
+
+### 4.4 Исключения в разных блоках и suppressed exceptions
+
+Когда ошибка происходит и в `try`, и при закрытии ресурса, при `try-with-resources` исключение закрытия становится **suppressed**.
+
+```java
+class BrokenResource implements AutoCloseable {
+    @Override
+    public void close() {
+        throw new RuntimeException("Ошибка в close()");
+    }
+
+    void doWork() {
+        throw new RuntimeException("Ошибка в doWork()");
+    }
+}
+
+public class SuppressedExample {
+    public static void main(String[] args) {
+        try (BrokenResource r = new BrokenResource()) {
+            r.doWork();
+        } catch (Exception e) {
+            System.out.println("Main exception: " + e.getMessage());
+            for (Throwable s : e.getSuppressed()) {
+                System.out.println("Suppressed: " + s.getMessage());
+            }
+        }
+    }
+}
+```
+
+Ожидаемая логика:
+- Основное исключение: из `doWork()`.
+- Suppressed: из `close()`.
+
+Это важно для диагностики: suppressed исключения часто объясняют дополнительные проблемы при очистке.
+
+---
+
+### 4.5 Кастомные исключения
+
+Хорошая практика — вводить доменные исключения с понятным смыслом.
+
+```java
+public class InsufficientFundsException extends RuntimeException {
+    private final String accountId;
+
+    public InsufficientFundsException(String accountId, String message) {
+        super(message);
+        this.accountId = accountId;
+    }
+
+    public String getAccountId() {
+        return accountId;
+    }
+}
+```
+
+Использование:
+
+```java
+public class PaymentService {
+    public void withdraw(String accountId, int balance, int amount) {
+        if (amount > balance) {
+            throw new InsufficientFundsException(
+                    accountId,
+                    "Недостаточно средств: balance=" + balance + ", amount=" + amount
+            );
+        }
+        // списание
+    }
+}
+```
+
+Советы:
+- Называйте исключения по бизнес-смыслу (`UserNotFoundException`, `OrderAlreadyPaidException`).
+- Не теряйте причину: используйте конструкторы с `cause`, если заворачиваете чужое исключение.
+
+---
+
+### 4.6 Обработка исключений в Spring (REST API)
+
+Обычно в Spring используют глобальный обработчик через `@RestControllerAdvice`.
+
+#### 1) Доменное исключение
+
+```java
+public class UserNotFoundException extends RuntimeException {
+    public UserNotFoundException(Long id) {
+        super("Пользователь с id=" + id + " не найден");
+    }
+}
+```
+
+#### 2) Сервис
+
+```java
+import org.springframework.stereotype.Service;
+
+@Service
+public class UserService {
+    public String findUserName(Long id) {
+        if (id <= 0) {
+            throw new IllegalArgumentException("id должен быть положительным");
+        }
+        if (id == 404L) {
+            throw new UserNotFoundException(id);
+        }
+        return "Alice";
+    }
+}
+```
+
+#### 3) Контроллер
+
+```java
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class UserController {
+    private final UserService userService;
+
+    public UserController(UserService userService) {
+        this.userService = userService;
+    }
+
+    @GetMapping("/users/{id}")
+    public String getUser(@PathVariable Long id) {
+        return userService.findUserName(id);
+    }
+}
+```
+
+#### 4) Глобальный exception handler
+
+```java
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.time.Instant;
+import java.util.Map;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleUserNotFound(UserNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+                "timestamp", Instant.now().toString(),
+                "error", "USER_NOT_FOUND",
+                "message", ex.getMessage()
+        ));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleBadRequest(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
+                "timestamp", Instant.now().toString(),
+                "error", "BAD_REQUEST",
+                "message", ex.getMessage()
+        ));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                "timestamp", Instant.now().toString(),
+                "error", "INTERNAL_ERROR",
+                "message", "Внутренняя ошибка сервера"
+        ));
+    }
+}
+```
+
+Что это даёт:
+- единый формат ошибок;
+- понятные HTTP-статусы;
+- меньше `try/catch` в контроллерах.
+
+---
+
+### 4.7 Практические рекомендации
+
+- Ловите максимально узкие типы исключений, а не сразу `Exception`.
+- Не «глотайте» исключение (`catch` без логирования/реакции).
+- Добавляйте контекст в сообщение (id сущности, входные параметры).
+- Для API возвращайте предсказуемую структуру ошибки.
+- Для инфраструктурных ошибок учитывайте retry/backoff, но с ограничениями.
+
+Если хочешь, следующим шагом могу добавить мини-практику: 5 задач по исключениям (с решениями) — от базовых до уровня Spring API.
