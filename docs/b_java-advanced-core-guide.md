@@ -46,6 +46,144 @@ Map (не наследуется от Collection)
 
 ---
 
+## 1.1) `Iterable` и `Iterator` в Java: как это работает
+
+`Iterable<T>` — это «контейнер, по которому можно пройтись».
+
+```java
+public interface Iterable<T> {
+    Iterator<T> iterator();
+}
+```
+
+`Iterator<T>` — это объект-курсор для пошагового обхода.
+
+```java
+public interface Iterator<E> {
+    boolean hasNext();
+    E next();
+    default void remove() { ... }
+}
+```
+
+### Почему это важно
+- `for-each` (`for (T x : collection)`) работает только для массивов и `Iterable`.
+- `Collection` наследуется от `Iterable`, поэтому все стандартные коллекции можно обходить через `for-each`.
+- `Iterator` даёт безопасное удаление текущего элемента во время обхода через `iterator.remove()`.
+
+### Что делает `for-each` под капотом
+
+Код:
+
+```java
+for (String name : names) {
+    System.out.println(name);
+}
+```
+
+Компилятор превращает примерно в:
+
+```java
+for (Iterator<String> it = names.iterator(); it.hasNext(); ) {
+    String name = it.next();
+    System.out.println(name);
+}
+```
+
+### Пример 1: ручной обход через `Iterator`
+
+```java
+import java.util.Iterator;
+import java.util.List;
+
+public class IteratorManualDemo {
+    public static void main(String[] args) {
+        List<String> names = List.of("Alice", "Bob", "Charlie");
+        Iterator<String> it = names.iterator();
+
+        while (it.hasNext()) {
+            String name = it.next();
+            System.out.println(name);
+        }
+    }
+}
+```
+
+### Пример 2: корректное удаление в процессе итерации
+
+```java
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+public class IteratorRemoveDemo {
+    public static void main(String[] args) {
+        List<Integer> nums = new ArrayList<>(List.of(1, 2, 3, 4, 5, 6));
+        Iterator<Integer> it = nums.iterator();
+
+        while (it.hasNext()) {
+            Integer n = it.next();
+            if (n % 2 == 0) {
+                it.remove(); // безопасно удаляем текущий элемент
+            }
+        }
+
+        System.out.println(nums); // [1, 3, 5]
+    }
+}
+```
+
+> Если удалять из коллекции напрямую (`nums.remove(n)`) во время итерации, обычно получите `ConcurrentModificationException`.
+
+### Пример 3: собственная коллекция, реализующая `Iterable`
+
+```java
+import java.util.Iterator;
+import java.util.NoSuchElementException;
+
+public class Range implements Iterable<Integer> {
+    private final int from;
+    private final int to;
+
+    public Range(int from, int to) {
+        this.from = from;
+        this.to = to;
+    }
+
+    @Override
+    public Iterator<Integer> iterator() {
+        return new Iterator<>() {
+            private int current = from;
+
+            @Override
+            public boolean hasNext() {
+                return current <= to;
+            }
+
+            @Override
+            public Integer next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return current++;
+            }
+        };
+    }
+
+    public static void main(String[] args) {
+        for (int x : new Range(3, 7)) {
+            System.out.print(x + " "); // 3 4 5 6 7
+        }
+    }
+}
+```
+
+### `Iterable` vs `Iterator` в одном предложении
+- `Iterable` отвечает на вопрос: «как получить итератор?»
+- `Iterator` отвечает на вопрос: «как получить следующий элемент?»
+
+---
+
 ## 2) Основные коллекции: различия и примеры
 
 > Ниже примеры можно запускать как отдельные `main`-методы или интегрировать в ваши демо-классы.
