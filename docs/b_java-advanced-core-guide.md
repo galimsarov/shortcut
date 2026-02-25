@@ -682,6 +682,7 @@ LinkedHashMap — это реализация интерфейса Map, кото
 - Скорость: LinkedHashMap немного медленнее HashMap из-за поддержания порядка элементов.
 
 ✅ Java библиотека (https://t.me/javalib) #java
+
 ---
 
 ### 2.9 `ConcurrentHashMap`
