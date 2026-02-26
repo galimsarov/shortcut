@@ -1711,3 +1711,220 @@ private Class<T> type;
 }
 ```
 Ставь 👍 (https://t.me/eo_test_task_bot) и забирай 📚  (https://t.me/eo_test_task_bot)Базу знаний (https://t.me/easy_java_ru/548)
+
+---
+
+## 6) Stream API в Java: функциональные интерфейсы, анонимные классы, лямбды и операции
+
+`Stream API` — это декларативный способ обработки данных: вы описываете **что сделать с набором данных**, а не **как вручную пройти цикл**.
+
+Типичный пайплайн выглядит так:
+
+```java
+List<String> result = names.stream()         // источник
+        .filter(s -> s.length() >= 4)        // промежуточная операция
+        .map(String::toUpperCase)            // промежуточная операция
+        .sorted()                            // промежуточная операция
+        .toList();                           // терминальная операция
+```
+
+Ключевые идеи:
+- Stream не хранит данные сам по себе — он работает поверх источника (`Collection`, массив, `Files.lines(...)`, генераторы и т.д.).
+- Промежуточные операции (`map`, `filter`, `sorted`, `distinct`, `limit`...) ленивые.
+- Вычисление стартует только на терминальной операции (`toList`, `collect`, `forEach`, `count`, `reduce`, `findFirst`...).
+- Один stream можно потребить только один раз.
+
+### 6.1 Функциональные интерфейсы: что это и зачем
+
+**Функциональный интерфейс** — интерфейс с ровно одним абстрактным методом (`SAM`: single abstract method).
+
+```java
+@FunctionalInterface
+public interface Calculator {
+    int apply(int a, int b);
+}
+```
+
+`@FunctionalInterface` необязателен, но полезен: компилятор проверит, что второй абстрактный метод случайно не добавлен.
+
+Стандартные функциональные интерфейсы из `java.util.function`:
+- `Predicate<T>`: `boolean test(T t)` — проверка условия.
+- `Function<T, R>`: `R apply(T t)` — преобразование.
+- `Consumer<T>`: `void accept(T t)` — «потребление» значения (обычно side effects).
+- `Supplier<T>`: `T get()` — поставщик значения.
+- `UnaryOperator<T>` / `BinaryOperator<T>` — частные случаи `Function`.
+
+### 6.2 Анонимный класс vs лямбда
+
+До Java 8 поведение часто передавали через анонимные классы:
+
+```java
+import java.util.Comparator;
+
+public class AnonymousClassDemo {
+    public static void main(String[] args) {
+        Comparator<String> byLength = new Comparator<String>() {
+            @Override
+            public int compare(String a, String b) {
+                return Integer.compare(a.length(), b.length());
+            }
+        };
+
+        System.out.println(byLength.compare("cat", "elephant")); // < 0
+    }
+}
+```
+
+С Java 8 тот же код компактнее лямбдой:
+
+```java
+import java.util.Comparator;
+
+public class LambdaDemo {
+    public static void main(String[] args) {
+        Comparator<String> byLength = (a, b) -> Integer.compare(a.length(), b.length());
+        System.out.println(byLength.compare("cat", "elephant"));
+    }
+}
+```
+
+И ещё компактнее через метод-референс + фабрику:
+
+```java
+Comparator<String> byLength = Comparator.comparingInt(String::length);
+```
+
+### 6.3 Один и тот же сценарий тремя способами
+
+Задача: отфильтровать чётные числа и возвести в квадрат.
+
+```java
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+public class CompareStylesDemo {
+    public static void main(String[] args) {
+        List<Integer> source = Arrays.asList(1, 2, 3, 4, 5, 6);
+
+        // 1) Императивный стиль
+        List<Integer> imperative = new ArrayList<>();
+        for (Integer n : source) {
+            if (n % 2 == 0) {
+                imperative.add(n * n);
+            }
+        }
+
+        // 2) Через Stream API + лямбды
+        List<Integer> streamLambda = source.stream()
+                .filter(n -> n % 2 == 0)
+                .map(n -> n * n)
+                .toList();
+
+        System.out.println(imperative);   // [4, 16, 36]
+        System.out.println(streamLambda); // [4, 16, 36]
+    }
+}
+```
+
+### 6.4 Основные операции Stream API
+
+#### `filter` — отбор
+
+```java
+List<String> adults = users.stream()
+        .filter(u -> u.age() >= 18)
+        .map(User::name)
+        .toList();
+```
+
+#### `map` — преобразование 1 к 1
+
+```java
+List<Integer> lengths = List.of("java", "stream", "api").stream()
+        .map(String::length)
+        .toList(); // [4, 6, 3]
+```
+
+#### `flatMap` — «расплющивание» вложенных структур
+
+```java
+List<List<String>> lines = List.of(
+        List.of("a", "b"),
+        List.of("c"),
+        List.of("d", "e")
+);
+
+List<String> all = lines.stream()
+        .flatMap(List::stream)
+        .toList(); // [a, b, c, d, e]
+```
+
+#### `distinct`, `sorted`, `limit`, `skip`
+
+```java
+List<Integer> top3 = List.of(7, 1, 3, 3, 9, 2, 9, 10).stream()
+        .distinct()                  // убрали дубликаты
+        .sorted()                    // [1, 2, 3, 7, 9, 10]
+        .skip(1)                     // [2, 3, 7, 9, 10]
+        .limit(3)                    // [2, 3, 7]
+        .toList();
+```
+
+#### Терминальные операции: `forEach`, `count`, `findFirst`, `reduce`, `collect`
+
+```java
+long cnt = List.of("a", "bb", "ccc").stream()
+        .filter(s -> s.length() >= 2)
+        .count(); // 2
+
+int sum = List.of(1, 2, 3, 4).stream()
+        .reduce(0, Integer::sum); // 10
+```
+
+### 6.5 `collect`: группировка и агрегация
+
+```java
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+record Employee(String name, String department, int salary) {}
+
+public class CollectorsDemo {
+    public static void main(String[] args) {
+        List<Employee> employees = List.of(
+                new Employee("Ann", "IT", 2000),
+                new Employee("Bob", "IT", 2500),
+                new Employee("Kate", "HR", 1800)
+        );
+
+        Map<String, List<Employee>> byDepartment = employees.stream()
+                .collect(Collectors.groupingBy(Employee::department));
+
+        Map<String, Integer> salaryByName = employees.stream()
+                .collect(Collectors.toMap(Employee::name, Employee::salary));
+
+        double avgSalary = employees.stream()
+                .collect(Collectors.averagingInt(Employee::salary));
+
+        System.out.println(byDepartment.keySet());
+        System.out.println(salaryByName);
+        System.out.println(avgSalary);
+    }
+}
+```
+
+### 6.6 Важные практические моменты
+
+- Не злоупотребляйте stream в очень простой логике, где обычный `for` читается лучше.
+- Избегайте side effects в `map/filter` (например, изменения внешнего списка).
+- `parallelStream()` применяйте только после измерений (профилирование/бенчмарк).
+- Для nullable-значений удобно использовать `Optional` и `Stream.ofNullable(...)` (Java 9+).
+
+### 6.7 Мини-шпаргалка
+
+- **Функциональный интерфейс** = 1 абстрактный метод.
+- **Анонимный класс** = старый способ передавать поведение.
+- **Лямбда** = компактная реализация функционального интерфейса.
+- **Stream** = цепочка преобразований данных: source -> intermediate ops -> terminal op.
