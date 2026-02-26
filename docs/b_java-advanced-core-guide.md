@@ -1318,15 +1318,15 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 public class UserController {
-    private final UserService userService;
+    private final UserService BUserService;
 
-    public UserController(UserService userService) {
-        this.userService = userService;
+    public UserController(UserService BUserService) {
+        this.BUserService = BUserService;
     }
 
     @GetMapping("/users/{id}")
     public String getUser(@PathVariable Long id) {
-        return userService.findUserName(id);
+        return BUserService.findUserName(id);
     }
 }
 ```
