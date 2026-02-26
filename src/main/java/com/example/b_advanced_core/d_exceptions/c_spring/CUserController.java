@@ -3,7 +3,7 @@ package com.example.b_advanced_core.d_exceptions.c_spring;
 /**
  * Контроллер
  */
-@RestController
+//@RestController
 public class CUserController {
     private final BUserService BUserService;
 
@@ -11,8 +11,11 @@ public class CUserController {
         this.BUserService = BUserService;
     }
 
-    @GetMapping("/users/{id}")
-    public String getUser(@PathVariable Long id) {
+//    @GetMapping("/users/{id}")
+    public String getUser(
+//            @PathVariable
+            Long id
+    ) {
         return BUserService.findUserName(id);
     }
 }
