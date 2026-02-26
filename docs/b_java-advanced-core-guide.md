@@ -1390,3 +1390,238 @@ public class GlobalExceptionHandler {
 - Для инфраструктурных ошибок учитывайте retry/backoff, но с ограничениями.
 
 Если хочешь, следующим шагом могу добавить мини-практику: 5 задач по исключениям (с решениями) — от базовых до уровня Spring API.
+
+---
+
+## 5) Дженерики (Generics) в Java: концепция, типизированные классы/методы и PECS
+
+### 5.1 Концепция Generics
+
+`Generics` позволяют параметризовать типы и писать переиспользуемый, но при этом типобезопасный код.
+
+Без дженериков (до Java 5) приходилось работать через `Object` и делать приведения вручную:
+
+```java
+List items = new ArrayList();
+items.add("hello");
+String s = (String) items.get(0); // ручной cast
+```
+
+С дженериками:
+
+```java
+List<String> items = new ArrayList<>();
+items.add("hello");
+String s = items.get(0); // cast не нужен
+```
+
+Что это даёт:
+- проверки типов на этапе компиляции;
+- меньше `ClassCastException` в рантайме;
+- более читаемые API (`List<User>` понятнее, чем просто `List`).
+
+> Важно: в Java дженерики реализованы через **type erasure** — информация о параметрах типа в рантайме стирается.
+
+---
+
+### 5.2 Типизированные (generic) классы
+
+Простой обобщённый контейнер:
+
+```java
+public class Box<T> {
+    private T value;
+
+    public Box(T value) {
+        this.value = value;
+    }
+
+    public T getValue() {
+        return value;
+    }
+
+    public void setValue(T value) {
+        this.value = value;
+    }
+}
+```
+
+Использование:
+
+```java
+Box<String> stringBox = new Box<>("Java");
+String text = stringBox.getValue();
+
+Box<Integer> intBox = new Box<>(42);
+Integer number = intBox.getValue();
+```
+
+Можно использовать несколько параметров типа:
+
+```java
+public class Pair<K, V> {
+    private final K key;
+    private final V value;
+
+    public Pair(K key, V value) {
+        this.key = key;
+        this.value = value;
+    }
+
+    public K getKey() { return key; }
+    public V getValue() { return value; }
+}
+```
+
+---
+
+### 5.3 Типизированные (generic) методы
+
+Generic-метод объявляет свои параметры типа перед возвращаемым типом:
+
+```java
+public class GenericMethods {
+
+    public static <T> void printArray(T[] arr) {
+        for (T el : arr) {
+            System.out.print(el + " ");
+        }
+        System.out.println();
+    }
+
+    public static <T> T firstOrNull(List<T> list) {
+        return list.isEmpty() ? null : list.get(0);
+    }
+}
+```
+
+Вызов:
+
+```java
+GenericMethods.printArray(new String[]{"A", "B"});
+GenericMethods.printArray(new Integer[]{1, 2, 3});
+
+String first = GenericMethods.firstOrNull(List.of("x", "y"));
+Integer n = GenericMethods.firstOrNull(List.of(10, 20));
+```
+
+Пример с ограничением (`bounded type parameter`):
+
+```java
+public static <T extends Number> double sum(List<T> nums) {
+    double total = 0;
+    for (T n : nums) {
+        total += n.doubleValue();
+    }
+    return total;
+}
+```
+
+`T extends Number` означает: метод принимает только типы-наследники `Number` (`Integer`, `Double`, `Long` и т.д.).
+
+---
+
+### 5.4 Инвариантность в Java
+
+В Java generic-типы **инвариантны**.
+
+Это значит, что даже если `Integer` — наследник `Number`,
+`List<Integer>` **не является** подтипом `List<Number>`.
+
+```java
+List<Integer> ints = List.of(1, 2, 3);
+// List<Number> nums = ints; // compile error
+```
+
+Почему так: иначе можно было бы добавить `Double` в список `Integer` и сломать типобезопасность.
+
+---
+
+### 5.5 Ковариантность (`? extends T`)
+
+Ковариантность в Java достигается через wildcard `? extends T`.
+
+```java
+public static double sumNumbers(List<? extends Number> numbers) {
+    double sum = 0;
+    for (Number n : numbers) {
+        sum += n.doubleValue();
+    }
+    return sum;
+}
+```
+
+Теперь можно передавать `List<Integer>`, `List<Double>`, `List<Long>`.
+
+```java
+double a = sumNumbers(List.of(1, 2, 3));
+double b = sumNumbers(List.of(1.5, 2.5));
+```
+
+Ограничение: в `List<? extends Number>` безопасно **читать** как `Number`, но нельзя безопасно добавлять (кроме `null`).
+
+---
+
+### 5.6 Контрвариантность (`? super T`)
+
+Контрвариантность задаётся через wildcard `? super T`.
+
+```java
+public static void addDefaults(List<? super Integer> target) {
+    target.add(10);
+    target.add(20);
+}
+```
+
+Метод принимает `List<Integer>`, `List<Number>`, `List<Object>`.
+
+```java
+List<Number> numbers = new ArrayList<>();
+addDefaults(numbers); // ок
+```
+
+Здесь можно безопасно **записывать** `Integer`, но при чтении получаем только `Object`.
+
+---
+
+### 5.7 PECS: Producer Extends, Consumer Super
+
+Правило PECS:
+
+- **Producer Extends** (`? extends T`) — когда источник **производит** значения типа `T` (мы читаем).
+- **Consumer Super** (`? super T`) — когда приёмник **потребляет** значения типа `T` (мы пишем).
+
+Классический пример копирования:
+
+```java
+public static <T> void copy(List<? extends T> src, List<? super T> dst) {
+    for (T item : src) {
+        dst.add(item);
+    }
+}
+```
+
+Использование:
+
+```java
+List<Integer> src = List.of(1, 2, 3);
+List<Number> dst = new ArrayList<>();
+copy(src, dst); // ок: Integer -> Number
+```
+
+`src` — producer (читаем, поэтому `extends`), `dst` — consumer (пишем, поэтому `super`).
+
+---
+
+### 5.8 Небольшая шпаргалка
+
+- `List<T>` — нужен конкретный тип без wildcard, и читаем/пишем именно `T`.
+- `List<? extends T>` — читаем как `T`, почти не пишем.
+- `List<? super T>` — пишем `T`, читаем как `Object`.
+
+Если сомневаешься:
+1. Ты в основном **читаешь** из коллекции? → `extends`.
+2. Ты в основном **пишешь** в коллекцию? → `super`.
+3. И читаешь, и пишешь строго один и тот же тип? → `T` без wildcard.
+
+Если хочешь, следующим шагом могу добавить отдельный блок с частыми ловушками по generics: `raw types`, bridge methods, ограничения type erasure и почему нельзя `new T()`.
