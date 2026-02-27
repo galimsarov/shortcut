@@ -2260,3 +2260,129 @@ FileChannel эффективнее потокового ввода-вывода,
 - Нужны байты (картинки/архивы) → `InputStream/OutputStream` или `Files.newInputStream/newOutputStream`.
 - Нужна скорость на больших объёмах → буферизация + NIO (`Files`, `FileChannel`).
 - Всегда закрывай ресурсы через `try-with-resources`.
+---
+
+## 8) Сериализация в Java: концепция, `serialVersionUID`, ограничения
+
+Сериализация — это преобразование объекта в поток байтов (например, для сохранения в файл или передачи по сети),
+а десериализация — обратный процесс.
+
+В Java это делается через `ObjectOutputStream` / `ObjectInputStream`.
+
+### 8.1 Концепция и требования
+
+Чтобы объект можно было сериализовать:
+- класс должен реализовывать `java.io.Serializable` (маркерный интерфейс);
+- все **несколько вложенные поля**, которые должны попасть в поток, тоже должны быть сериализуемыми;
+- поля, которые нельзя/не нужно сохранять, помечают `transient`;
+- `static`-поля не сериализуются (это состояние класса, а не объекта).
+
+Пример базовой сериализации:
+
+```java
+import java.io.*;
+import java.nio.file.*;
+
+public class SerializationBasicsDemo {
+    public static void main(String[] args) throws Exception {
+        Path file = Path.of("tmp/serialization/user.bin");
+        Files.createDirectories(file.getParent());
+
+        User user = new User(42L, "alice", "secret-token");
+
+        try (ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(file.toFile()))) {
+            out.writeObject(user);
+        }
+
+        try (ObjectInputStream in = new ObjectInputStream(new FileInputStream(file.toFile()))) {
+            User restored = (User) in.readObject();
+            System.out.println(restored.getSessionToken()); // null, т.к. transient
+        }
+    }
+
+    static class User implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private long id;
+        private String login;
+        private transient String sessionToken;
+
+        User(long id, String login, String sessionToken) {
+            this.id = id;
+            this.login = login;
+            this.sessionToken = sessionToken;
+        }
+
+        public String getSessionToken() {
+            return sessionToken;
+        }
+    }
+}
+```
+
+> Рабочие демо в проекте: `ASerializationBasicsDemo` и `BSerializationRequirementsDemo`.
+
+---
+
+### 8.2 Что такое `serialVersionUID` и зачем он нужен
+
+`serialVersionUID` — версия сериализуемого класса. При десериализации JVM сверяет UID,
+записанный в байтах, с UID текущего класса.
+
+- Совпали → JVM пытается восстановить объект.
+- Не совпали → `InvalidClassException`.
+
+Если `serialVersionUID` не указан явно, JVM вычисляет его автоматически на основе структуры класса.
+Это опасно для эволюции модели: даже «невинное» изменение кода может сломать совместимость.
+
+Рекомендуемый стиль:
+
+```java
+class User implements Serializable {
+    private static final long serialVersionUID = 1L;
+    // поля...
+}
+```
+
+Когда повышать UID:
+- вы делаете несовместимые изменения формата (удалили/переименовали важные поля, изменили иерархию и т.д.);
+- вы **осознанно** хотите запретить чтение старых данных.
+
+Когда можно оставить прежний UID:
+- изменения обратно совместимы (например, добавили новое необязательное поле).
+
+---
+
+### 8.3 Проблемы и ограничения стандартной Java-сериализации
+
+1. **Хрупкость версионирования**
+   - при изменениях модели легко получить `InvalidClassException`;
+   - нужно дисциплинированно управлять `serialVersionUID`.
+
+2. **Безопасность**
+   - десериализация недоверенных данных потенциально опасна (gadget chains, RCE-атаки);
+   - не следует принимать произвольные serialized-байты извне без фильтрации и ограничений.
+
+3. **Слабая переносимость и прозрачность формата**
+   - формат Java-serialization привязан к JVM/классам;
+   - неудобен для межъязыкового обмена и долгого хранения.
+
+4. **Производительность и размер**
+   - обычно хуже, чем у бинарных протоколов вроде Protobuf/Avro/Kryo;
+   - поток содержит метаданные класса, что увеличивает объём.
+
+5. **Конструкторы не вызываются как обычно**
+   - при десериализации объект создаётся специальным механизмом;
+   - инварианты, которые вы обеспечивали в конструкторе, могут быть обойдены.
+
+6. **Прокси, лямбды, внутренние классы**
+   - их сериализация может быть нестабильной/неочевидной между версиями.
+
+---
+
+### Практические рекомендации
+
+- Для внешних API и интеграций лучше использовать JSON/Protobuf/Avro.
+- Java Serialization применять только для внутренних, контролируемых сценариев.
+- Всегда задавать `serialVersionUID` явно.
+- Секреты (`token`, `password`, ключи) помечать `transient`.
+- Не десериализовать недоверенные данные «как есть».
