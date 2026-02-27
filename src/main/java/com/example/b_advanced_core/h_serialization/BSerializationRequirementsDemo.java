@@ -17,14 +17,14 @@ public class BSerializationRequirementsDemo {
         try {
             writeToFile(bad, badFile);
         } catch (NotSerializableException e) {
-            System.out.println("Ожидаемо получили NotSerializableException: " + e.getMessage());
+            System.out.println("As expected, we received a NotSerializableException: " + e.getMessage());
         }
 
         OrderGood good = new OrderGood("ORD-2", new AuditTrail("approved-by-admin"));
         writeToFile(good, goodFile);
         OrderGood restored = (OrderGood) readFromFile(goodFile);
 
-        System.out.println("После корректной сериализации: " + restored);
+        System.out.println("After correct serialization: " + restored);
     }
 
     private static void writeToFile(Object obj, Path file) throws IOException {

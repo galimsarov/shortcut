@@ -4,6 +4,11 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+/**
+ * Сериализация — это преобразование объекта в поток байтов (например, для сохранения в файл или передачи по сети),
+ * а десериализация — обратный процесс.
+ * В Java это делается через ObjectOutputStream / ObjectInputStream.
+ */
 public class ASerializationBasicsDemo {
 
     public static void main(String[] args) throws Exception {
@@ -13,15 +18,21 @@ public class ASerializationBasicsDemo {
         Path file = dir.resolve("user.bin");
 
         User user = new User(42L, "alice", "secret-token");
-        System.out.println("До сериализации: " + user);
+        System.out.println("Before serialization: " + user);
 
         serialize(user, file);
 
         User restored = deserialize(file);
-        System.out.println("После десериализации: " + restored);
-        System.out.println("token после десериализации = " + restored.getSessionToken()); // null (transient)
+        System.out.println("After deserialization: " + restored);
+        System.out.println("After deserialization token = " + restored.getSessionToken()); // null (transient)
     }
 
+    /**
+     * Пример базовой сериализации:
+     * @param user
+     * @param file
+     * @throws IOException
+     */
     private static void serialize(User user, Path file) throws IOException {
         try (ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(file.toFile()))) {
             out.writeObject(user);
@@ -34,6 +45,13 @@ public class ASerializationBasicsDemo {
         }
     }
 
+    /**
+     * Чтобы объект можно было сериализовать:
+     * - класс должен реализовывать java.io.Serializable (маркерный интерфейс);
+     * - все вложенные поля, которые должны попасть в поток, тоже должны быть сериализуемыми;
+     * - поля, которые нельзя/не нужно сохранять, помечают transient;
+     * - static-поля не сериализуются (это состояние класса, а не объекта).
+     */
     private static final class User implements Serializable {
         private static final long serialVersionUID = 1L;
 
