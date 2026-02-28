@@ -2386,3 +2386,243 @@ class User implements Serializable {
 - Всегда задавать `serialVersionUID` явно.
 - Секреты (`token`, `password`, ключи) помечать `transient`.
 - Не десериализовать недоверенные данные «как есть».
+
+---
+
+## 9) Копирование объектов в Java: `shallow/deep`, `clone()`, Prototype, сериализация
+
+Ключевая идея: в Java копируется **ссылка**, а не сам объект. Поэтому «копирование объекта» — это всегда отдельная стратегия, которую вы реализуете явно.
+
+### 9.1 Shallow copy vs Deep copy
+
+Допустим, есть объект `User`, внутри которого лежит `Address`.
+
+- **Shallow copy** копирует поля верхнего уровня, но вложенные объекты остаются общими.
+- **Deep copy** копирует весь граф объектов (или ту его часть, которую вы считаете частью состояния).
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+class Address {
+    String city;
+
+    Address(String city) {
+        this.city = city;
+    }
+}
+
+class User {
+    String name;
+    Address address;
+    List<String> tags;
+
+    User(String name, Address address, List<String> tags) {
+        this.name = name;
+        this.address = address;
+        this.tags = tags;
+    }
+
+    // Shallow copy: Address и tags будут теми же объектами
+    User shallowCopy() {
+        return new User(this.name, this.address, this.tags);
+    }
+
+    // Deep copy: создаём новые вложенные объекты
+    User deepCopy() {
+        Address copiedAddress = new Address(this.address.city);
+        List<String> copiedTags = new ArrayList<>(this.tags);
+        return new User(this.name, copiedAddress, copiedTags);
+    }
+}
+
+public class CopyDemo {
+    public static void main(String[] args) {
+        User original = new User("Alice", new Address("Berlin"), new ArrayList<>(List.of("vip")));
+
+        User shallow = original.shallowCopy();
+        User deep = original.deepCopy();
+
+        original.address.city = "Paris";
+        original.tags.add("new");
+
+        System.out.println(shallow.address.city); // Paris  (общий Address)
+        System.out.println(shallow.tags);         // [vip, new] (общий List)
+
+        System.out.println(deep.address.city);    // Berlin (независимая копия)
+        System.out.println(deep.tags);            // [vip]
+    }
+}
+```
+
+> На практике deep copy почти всегда нужно делать осознанно: какие поля считаются частью «владения» объекта, а какие можно делить.
+
+---
+
+### 9.2 `clone()` в Java: как работает и почему с ним осторожно
+
+`Object#clone()` делает поверхностное копирование (по умолчанию) и требует `Cloneable`.
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+class Profile implements Cloneable {
+    String name;
+    List<String> skills;
+
+    Profile(String name, List<String> skills) {
+        this.name = name;
+        this.skills = skills;
+    }
+
+    @Override
+    protected Profile clone() {
+        try {
+            Profile copy = (Profile) super.clone(); // shallow-копия полей
+            copy.skills = new ArrayList<>(this.skills); // вручную углубляем нужные поля
+            return copy;
+        } catch (CloneNotSupportedException e) {
+            throw new AssertionError(e);
+        }
+    }
+}
+```
+
+Минусы `clone()`:
+- неочевидный контракт (`Cloneable` — маркер без метода);
+- легко забыть углубить mutable-поля;
+- неудобно с `final` полями и иерархиями;
+- хуже читается, чем явный copy-конструктор/фабрика.
+
+Обычно в продакшене чаще используют:
+- **copy constructor** (`new User(existingUser)`);
+- статическую фабрику (`User.copyOf(user)`);
+- record + неизменяемые поля (копирование через создание нового экземпляра).
+
+---
+
+### 9.3 Prototype pattern для копирования
+
+Prototype — это «создавай новый объект, клонируя прототип».
+
+```java
+import java.util.HashMap;
+import java.util.Map;
+
+interface Prototype<T> {
+    T copy();
+}
+
+class GameUnit implements Prototype<GameUnit> {
+    private final String type;
+    private final int baseHp;
+
+    GameUnit(String type, int baseHp) {
+        this.type = type;
+        this.baseHp = baseHp;
+    }
+
+    @Override
+    public GameUnit copy() {
+        return new GameUnit(type, baseHp);
+    }
+
+    @Override
+    public String toString() {
+        return "GameUnit{" + "type='" + type + '\'' + ", baseHp=" + baseHp + '}';
+    }
+}
+
+class UnitRegistry {
+    private final Map<String, GameUnit> prototypes = new HashMap<>();
+
+    void register(String key, GameUnit prototype) {
+        prototypes.put(key, prototype);
+    }
+
+    GameUnit create(String key) {
+        GameUnit prototype = prototypes.get(key);
+        if (prototype == null) {
+            throw new IllegalArgumentException("Unknown prototype: " + key);
+        }
+        return prototype.copy();
+    }
+}
+
+public class PrototypeDemo {
+    public static void main(String[] args) {
+        UnitRegistry registry = new UnitRegistry();
+        registry.register("archer", new GameUnit("Archer", 70));
+        registry.register("tank", new GameUnit("Tank", 200));
+
+        GameUnit u1 = registry.create("archer");
+        GameUnit u2 = registry.create("tank");
+
+        System.out.println(u1);
+        System.out.println(u2);
+    }
+}
+```
+
+Где удобно:
+- когда создание объекта «с нуля» дорогое;
+- когда много готовых пресетов/шаблонов состояния;
+- когда нужно скрыть детали инициализации.
+
+---
+
+### 9.4 Другие способы копирования (через сериализацию и не только)
+
+#### Вариант A: Java Serialization (байтовый round-trip)
+
+Работает как deep copy, если весь граф сериализуем.
+
+```java
+import java.io.*;
+
+public class SerializationCopyUtil {
+    @SuppressWarnings("unchecked")
+    public static <T extends Serializable> T deepCopy(T obj) {
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            try (ObjectOutputStream oos = new ObjectOutputStream(bos)) {
+                oos.writeObject(obj);
+            }
+
+            ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());
+            try (ObjectInputStream ois = new ObjectInputStream(bis)) {
+                return (T) ois.readObject();
+            }
+        } catch (IOException | ClassNotFoundException e) {
+            throw new RuntimeException("Deep copy failed", e);
+        }
+    }
+}
+```
+
+Плюс: минимум ручного кода для сложных графов.  
+Минусы: медленнее, требования к `Serializable`, ограничения безопасности/эволюции схемы.
+
+#### Вариант B: JSON round-trip (Jackson/Gson)
+
+Идея та же: `obj -> JSON -> obj`. Удобно, когда уже есть JSON-модель. Но:
+- возможны потери типов/форматов;
+- для полиморфизма нужна дополнительная конфигурация;
+- обычно тоже медленнее ручного копирования.
+
+#### Вариант C: mapstruct / мапперы / ручные DTO-конвертеры
+
+Надёжный путь для бизнес-кода:
+- явно контролируете, какие поля копируются;
+- можно делать преобразования и валидацию;
+- проще поддерживать при изменениях модели.
+
+---
+
+### 9.5 Что выбрать на практике
+
+- Нужна **предсказуемость и контроль** → copy constructor / `copyOf` / mapper.
+- Нужна **скорость** → избегать сериализации, писать явное копирование горячих путей.
+- Нужна **простота для сложного графа** и это внутренний сценарий → можно рассмотреть serialization round-trip.
+- `clone()` использовать только если в проекте уже принят этот стиль и есть чёткие правила для deep-copy mutable полей.
