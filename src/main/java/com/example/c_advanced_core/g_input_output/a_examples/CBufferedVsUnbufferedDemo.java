@@ -1,4 +1,4 @@
-package com.example.c_advanced_core.g_input_output;
+package com.example.c_advanced_core.g_input_output.a_examples;
 
 import java.io.*;
 import java.nio.file.*;

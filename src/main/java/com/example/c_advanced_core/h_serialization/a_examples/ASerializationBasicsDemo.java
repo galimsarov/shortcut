@@ -1,4 +1,4 @@
-package com.example.c_advanced_core.h_serialization;
+package com.example.c_advanced_core.h_serialization.a_examples;
 
 import java.io.*;
 import java.nio.file.Files;

@@ -7,7 +7,7 @@ import java.util.Arrays;
  * Требования: О(n) по времени и O(1) по памяти
  * {1,2,0,3,0,0,4,5} -> {1,2,3,4,5,0,0,0}
  */
-public class HeroesOnTheLeft {
+public class AZeroesOnTheRight {
     public static void main(String[] args) {
 //        int[] arr = new int[]{1, 2, 0, 3, 0, 0, 4, 5};
 //        int[] arr = new int[]{1, 2, 3, 4, 5, 0, 0, 0};
@@ -19,26 +19,18 @@ public class HeroesOnTheLeft {
     }
 
     private static void sortArray(int[] arr) {
-        int index = 0;
-        int leftZero = -1;
-        int rightNotZero = -1;
-        while (index < arr.length) {
-            int value = arr[index];
-            int tmp = leftZero;
-            if (value == 0) {
-                leftZero = index;
-            } else {
-                rightNotZero = index;
+        int readIndex = 0;
+        int writeIndex = 0;
+        while (readIndex < arr.length) {
+            int temp = arr[readIndex];
+            if (temp != 0) {
+                arr[writeIndex] = temp;
+                writeIndex++;
             }
-            if ((rightNotZero > leftZero) && (leftZero != -1)) {
-                arr[leftZero] = arr[rightNotZero];
-                arr[rightNotZero] = 0;
-                leftZero++;
-                rightNotZero = leftZero - 1;
-            } else if (tmp != -1) {
-                leftZero = tmp;
-            }
-            index++;
+            readIndex++;
+        }
+        for (int i = writeIndex; i < arr.length; i++) {
+            arr[i] = 0;
         }
     }
 }
