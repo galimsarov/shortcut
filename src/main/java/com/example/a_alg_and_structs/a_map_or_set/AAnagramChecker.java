@@ -1,4 +1,4 @@
-package com.example.a_algos.a_map_or_set;
+package com.example.a_alg_and_structs.a_map_or_set;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -13,7 +13,7 @@ import java.util.Map;
  * "rat" и "car" → false
  * "aabbcc" и "abcccd" → false
  */
-public class AnagramChecker {
+public class AAnagramChecker {
     public static void main(String[] args) {
         String s1 = "aabbcc", s2 = "abcccd";
         System.out.println(s1);
