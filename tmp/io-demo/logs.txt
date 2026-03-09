@@ -1,0 +1,4 @@
+2025-01-01 10:15:30 | INFO | message1
+2025-01-01 10:15:31 | WARN | message2
+2025-01-01 10:15:32 | ERROR | message3
+2025-01-01 10:15:33 | FATAL | message4
