@@ -31,16 +31,96 @@
 - несколько потоков ускоряют выполнение задач, но повышают сложность из-за shared state.
 
 ### Синхронизация
-**Синхронизация** нужна, чтобы:
+**Синхронизация** — это набор механизмов, которые управляют доступом нескольких потоков к общим данным и согласуют порядок их выполнения.
+
+Иначе говоря, синхронизация отвечает на 2 вопроса:
+1. кто сейчас имеет право работать с общим ресурсом;
+2. когда один поток «увидит» изменения, сделанные другим.
+
+Синхронизация нужна, чтобы:
 - обеспечить взаимное исключение (чтобы только один поток входил в критическую секцию);
 - обеспечить корректную видимость изменений между потоками;
 - координировать порядок выполнения (кто и когда продолжит работу).
 
+Что может быть синхронизировано через `synchronized`:
+
+1) **Блок кода** (lock на конкретном объекте):
+```java
+private final Object lock = new Object();
+private int counter = 0;
+
+public void increment() {
+    synchronized (lock) {
+        counter++;
+    }
+}
+```
+
+2) **Метод экземпляра** (`synchronized`-метод, lock на `this`):
+```java
+private int balance = 0;
+
+public synchronized void deposit(int amount) {
+    balance += amount;
+}
+```
+
+3) **Статический метод** (lock на `Class`-объекте, то есть «на уровне класса»):
+```java
+private static int globalCounter = 0;
+
+public static synchronized void incGlobal() {
+    globalCounter++;
+}
+```
+
+> Важно: «синхронизация класса» в Java обычно означает захват монитора объекта `MyClass.class`.
+
 ### Монитор
-В Java каждый объект может выступать **монитором**:
+**Монитор** — это объект-синхронизатор, который предоставляет:
+- взаимное исключение (в один момент времени критическую секцию под этим монитором выполняет только один поток);
+- очередь ожидания для `wait/notify/notifyAll`.
+
+В Java монитор связан с объектом (или с `Class`-объектом для `static synchronized`), поэтому каждый объект может выступать **монитором**:
 - вход в `synchronized` — захват монитора;
 - выход из `synchronized` — освобождение монитора;
 - `wait/notify/notifyAll` — механизм ожидания/сигнализации на этом же мониторе.
+
+Пример 1: монитор — **отдельно созданный объект**:
+```java
+class Counter {
+    private final Object monitor = new Object();
+    private int value;
+
+    public void inc() {
+        synchronized (monitor) {
+            value++;
+        }
+    }
+}
+```
+
+Пример 2: монитор — **уже существующий объект** (`this`):
+```java
+class Counter {
+    private int value;
+
+    public synchronized void inc() { // эквивалентно synchronized(this)
+        value++;
+    }
+}
+```
+
+Пример 3: монитор на уровне класса (`Counter.class`):
+```java
+class Counter {
+    private static int global;
+
+    public static synchronized void incGlobal() { // lock на Counter.class
+        global++;
+    }
+}
+```
 
 ---
 
