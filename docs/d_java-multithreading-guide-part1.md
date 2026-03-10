@@ -2,6 +2,18 @@
 
 > Первая часть из 16 тем. В этом документе разбираем именно тот план, который вы предложили.
 
+## Перед стартом: многопоточность и асинхронность
+
+**Многопоточность** — это модель, в которой внутри одного процесса одновременно (или псевдо-одновременно, в зависимости от планировщика и числа ядер) выполняются несколько потоков (`Thread`).
+
+**Асинхронность** — это модель неблокирующего выполнения, когда задача запускается и результат забирается позже (через callback, `Future`, `CompletableFuture`, event loop и т.д.), без обязательного ожидания в текущем месте кода.
+
+Ключевая разница:
+- многопоточность отвечает на вопрос **«кто исполняет?»** (несколько потоков);
+- асинхронность отвечает на вопрос **«как организовано ожидание результата?»** (не блокируя текущий поток).
+
+Их можно комбинировать: асинхронный API может выполняться на пуле потоков, а может быть и однопоточным (например, event loop).
+
 ## План части 1 (8 тем)
 1. Общие понятия: процесс, поток, синхронизация, монитор
 2. Способы создания потоков: `Thread`, `Runnable`, `Callable`
@@ -156,11 +168,20 @@ t.start();
 
 ### 2.3 `Callable`
 ```java
-Callable<Integer> task = () -> 42;
-ExecutorService pool = Executors.newSingleThreadExecutor();
-Future<Integer> future = pool.submit(task);
-Integer result = future.get();
-pool.shutdown();
+Callable<Integer> task = () -> {
+    System.out.println("Callable runs in: " + Thread.currentThread().getName());
+    return 42;
+};
+
+// FutureTask<T> — это адаптер, который одновременно реализует Runnable и Future<T>:
+// его можно запустить в Thread как Runnable, а результат получить как Future.
+FutureTask<Integer> futureTask = new FutureTask<>(task);
+
+Thread t = new Thread(futureTask, "callable-thread");
+t.start();
+
+Integer result = futureTask.get(); // получаем результат (при необходимости ждём завершения)
+System.out.println("Result = " + result);
 ```
 
 Отличия от `Runnable`:
