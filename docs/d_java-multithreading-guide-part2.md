@@ -164,13 +164,53 @@ String out = cf.join(); // join бросает unchecked CompletionException
 ### 12.1 Race condition (состояние гонки)
 Общее определение: итог программы зависит от непредсказуемого порядка выполнения потоков.
 
-Пример: два потока инкрементируют один `int` без синхронизации.
+Наглядный пример: два потока инкрементируют один `int` без синхронизации.
 
 ```java
-count++; // не атомарно
+class Counter {
+    int value = 0;
+}
+
+Counter c = new Counter();
+
+Thread t1 = new Thread(() -> {
+    for (int i = 0; i < 100_000; i++) c.value++; // не атомарно
+});
+Thread t2 = new Thread(() -> {
+    for (int i = 0; i < 100_000; i++) c.value++;
+});
+
+t1.start();
+t2.start();
+t1.join();
+t2.join();
+
+System.out.println(c.value); // часто < 200_000
 ```
 
 Операция распадается на read-modify-write, и часть обновлений теряется.
+
+Способ решения на Java:
+
+```java
+AtomicInteger safe = new AtomicInteger(0);
+
+Thread t1 = new Thread(() -> {
+    for (int i = 0; i < 100_000; i++) safe.incrementAndGet();
+});
+Thread t2 = new Thread(() -> {
+    for (int i = 0; i < 100_000; i++) safe.incrementAndGet();
+});
+
+t1.start();
+t2.start();
+t1.join();
+t2.join();
+
+System.out.println(safe.get()); // 200_000
+```
+
+Альтернативы: `synchronized`, `ReentrantLock`, `LongAdder` (для высококонкурентных счётчиков).
 
 ### 12.2 Data race
 Более формально (в духе JMM): два потока одновременно обращаются к одной переменной, хотя бы один доступ — запись, и между доступами нет happens-before отношения.
@@ -181,6 +221,40 @@ count++; // не атомарно
 - `data race` — формальное свойство доступа к памяти;
 - `race condition` — более широкий класс логических гонок в конкурентном коде.
 
+Наглядный пример data race (проблема видимости):
+
+```java
+class FlagHolder {
+    boolean ready = false; // нет volatile
+}
+
+FlagHolder holder = new FlagHolder();
+
+Thread reader = new Thread(() -> {
+    while (!holder.ready) {
+        // busy-wait
+    }
+    System.out.println("reader observed ready=true");
+});
+
+Thread writer = new Thread(() -> holder.ready = true);
+
+reader.start();
+writer.start();
+```
+
+Поток `reader` может слишком долго не увидеть изменение из-за отсутствия корректной публикации.
+
+Способ решения на Java:
+
+```java
+class FlagHolder {
+    volatile boolean ready = false;
+}
+```
+
+Альтернативы: чтение/запись под одним lock-ом (`synchronized`/`Lock`), либо использование `AtomicBoolean`.
+
 ### 12.3 Deadlock (взаимная блокировка)
 Два или более потока навсегда ждут ресурсы друг друга.
 
@@ -188,16 +262,111 @@ count++; // не атомарно
 - `T1` держит `lockA`, ждёт `lockB`;
 - `T2` держит `lockB`, ждёт `lockA`.
 
+Наглядный пример:
+
+```java
+Object lockA = new Object();
+Object lockB = new Object();
+
+Thread t1 = new Thread(() -> {
+    synchronized (lockA) {
+        sleep(100);
+        synchronized (lockB) {
+            System.out.println("t1 done");
+        }
+    }
+});
+
+Thread t2 = new Thread(() -> {
+    synchronized (lockB) {
+        sleep(100);
+        synchronized (lockA) {
+            System.out.println("t2 done");
+        }
+    }
+});
+```
+
+Здесь оба потока могут зависнуть навсегда.
+
 Минимизация риска:
 - единый порядок захвата lock-ов;
 - таймауты (`tryLock(timeout, unit)`);
 - уменьшение числа вложенных блокировок;
 - как можно меньше shared mutable state.
 
+Способ решения на Java (фиксированный порядок lock-ов):
+
+```java
+Object first = lockA;
+Object second = lockB;
+
+Thread t1 = new Thread(() -> {
+    synchronized (first) {
+        synchronized (second) {
+            // ...
+        }
+    }
+});
+
+Thread t2 = new Thread(() -> {
+    synchronized (first) {
+        synchronized (second) {
+            // ...
+        }
+    }
+});
+```
+
+Оба потока берут блокировки в одном порядке, и цикл ожидания не возникает.
+
 ### 12.4 Livelock (лайвлок)
 Потоки не заблокированы, но «слишком вежливо» уступают друг другу и не делают прогресс.
 
 То есть активность есть, а полезного продвижения нет.
+
+Наглядный пример (упрощённо):
+
+```java
+class Worker {
+    private final String name;
+    private boolean active = true;
+
+    Worker(String name) { this.name = name; }
+
+    void work(Worker other, SharedResource resource) {
+        while (active) {
+            if (resource.owner != this) {
+                Thread.yield();
+                continue;
+            }
+            if (other.active) {
+                System.out.println(name + ": you go first");
+                resource.owner = other; // оба постоянно уступают
+                continue;
+            }
+            resource.use();
+            active = false;
+            resource.owner = other;
+        }
+    }
+}
+```
+
+Способ решения на Java:
+- добавить случайную задержку (`ThreadLocalRandom`) перед повторной попыткой;
+- ограничить количество «уступок»;
+- использовать более строгий протокол синхронизации (`Lock` + очередь/condition).
+
+Мини-пример «backoff»:
+
+```java
+int retries = 0;
+while (!lock.tryLock()) {
+    TimeUnit.MILLISECONDS.sleep(ThreadLocalRandom.current().nextInt(1, 10));
+    if (++retries > 100) throw new IllegalStateException("too much contention");
+}
+```
 
 ### 12.5 Starvation (голодание)
 Поток слишком долго не получает CPU/lock/ресурс из-за несправедливого планирования или постоянной конкуренции.
@@ -211,6 +380,45 @@ count++; // не атомарно
 - делать критические секции короткими;
 - использовать справедливые блокировки там, где это реально нужно (`new ReentrantLock(true)` — с оговоркой по throughput);
 - грамотно ограничивать конкуренцию через пулы/очереди.
+
+Наглядный пример (условно):
+
+```java
+ReentrantLock lock = new ReentrantLock(); // по умолчанию unfair
+
+Runnable greedy = () -> {
+    while (true) {
+        lock.lock();
+        try {
+            // очень короткая работа, но поток постоянно перезахватывает lock
+        } finally {
+            lock.unlock();
+        }
+    }
+};
+
+Runnable unlucky = () -> {
+    while (true) {
+        lock.lock();
+        try {
+            System.out.println("I finally got lock");
+            break;
+        } finally {
+            lock.unlock();
+        }
+    }
+};
+```
+
+`unlucky` может ждать непропорционально долго.
+
+Способ решения на Java:
+
+```java
+ReentrantLock fairLock = new ReentrantLock(true); // fair policy
+```
+
+Дополнительно помогают bounded-очереди задач (`BlockingQueue`) и отказ от бесконечных «жадных» циклов.
 
 ---
 
