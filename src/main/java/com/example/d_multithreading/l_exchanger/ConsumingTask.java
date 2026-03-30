@@ -14,7 +14,7 @@ public final class ConsumingTask extends ExchangingTask {
     protected void handle(final Queue<ExchangedObject> objects) {
         while (!objects.isEmpty()) {
             final ExchangedObject object = objects.poll();
-            out.printf("%s was consumed\n", object);
+            out.printf("%s was consumed%n", object);
         }
         out.println("----------------------------");
     }

@@ -12,7 +12,7 @@ import java.util.*;
  * nums=[1, 1], target=2 → [0, 1] (минимальная длина массива)
  * nums=[1, 2, 3], target=100 → пары нет (например, [-1, -1])
  */
-public class PairSumFinder {
+public class CPairSumFinder {
     public static void main(String[] args) {
 //        int[] nums = new int[]{2, 7, 11, 15};
 //        int target = 9;
