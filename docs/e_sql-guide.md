@@ -103,21 +103,54 @@ UNION ALL
 SELECT email FROM users_2026;
 ```
 
-#### MERGE (PostgreSQL 15+)
-Позволяет в одном операторе делать upsert/delete по условию сопоставления.
+#### MERGE (PostgreSQL 15+): подробнее
+
+`MERGE` — это оператор синхронизации данных между **целевой** таблицей (`MERGE INTO`) и **источником** (`USING`).
+
+Типовой кейс: есть «боевые» данные `products` и стейджинг-таблица `products_staging`, куда загружается новая версия каталога.
 
 ```sql
-MERGE INTO users u
-USING staging_users s
-ON u.email = s.email
-WHEN MATCHED THEN
-  UPDATE SET created_at = s.created_at
-WHEN NOT MATCHED THEN
-  INSERT (email, created_at)
-  VALUES (s.email, s.created_at);
+CREATE TABLE products (
+  sku TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  price NUMERIC(12,2) NOT NULL CHECK (price >= 0),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE products_staging (
+  sku TEXT,
+  name TEXT,
+  price NUMERIC(12,2),
+  is_active BOOLEAN
+);
 ```
 
-> До появления `MERGE` часто использовали `INSERT ... ON CONFLICT ... DO UPDATE`.
+Пример синхронизации:
+```sql
+MERGE INTO products p
+USING products_staging s
+ON p.sku = s.sku
+WHEN MATCHED AND s.is_active = FALSE THEN
+  DELETE
+WHEN MATCHED THEN
+  UPDATE SET
+    name = s.name,
+    price = s.price,
+    is_active = s.is_active,
+    updated_at = now()
+WHEN NOT MATCHED THEN
+  INSERT (sku, name, price, is_active)
+  VALUES (s.sku, s.name, s.price, COALESCE(s.is_active, TRUE));
+```
+
+Как читать этот `MERGE`:
+1. `ON p.sku = s.sku` — правило сопоставления строк.
+2. `WHEN MATCHED AND ... THEN DELETE` — если товар найден и в источнике выключен, удаляем.
+3. `WHEN MATCHED THEN UPDATE` — если товар найден, обновляем.
+4. `WHEN NOT MATCHED THEN INSERT` — если товара нет в целевой таблице, добавляем.
+
+> До появления `MERGE` часто использовали `INSERT ... ON CONFLICT ... DO UPDATE`, но `MERGE` удобнее, когда в одном месте нужно и `UPDATE`, и `INSERT`, и `DELETE`.
 
 ### Агрегация и GROUP BY
 
@@ -163,38 +196,16 @@ WHERE EXISTS (
 );
 ```
 
-#### EXISTS
-Проверяет факт существования хотя бы одной строки.
+#### EXISTS: подробнее
 
-- `EXISTS` часто эффективнее, чем `IN`, когда важен именно факт наличия.
-- Обычно прекращает поиск на первом совпадении.
+`EXISTS` возвращает `TRUE`, если вложенный запрос вернул хотя бы одну строку.
 
-### Констрейнты (constraints)
+Важно:
+- что именно стоит в `SELECT` внутри `EXISTS` (например, `SELECT 1` или `SELECT *`) — обычно неважно;
+- проверяется **факт наличия** строки, а не значения;
+- хорошо подходит для проверок «есть/нет связанных записей».
 
-Основные ограничения:
-- `PRIMARY KEY`
-- `FOREIGN KEY`
-- `UNIQUE`
-- `NOT NULL`
-- `CHECK`
-- `DEFAULT` (формально не ограничение целостности, но часть определения колонки)
-
-Пример:
-```sql
-CREATE TABLE products (
-  id BIGSERIAL PRIMARY KEY,
-  sku TEXT NOT NULL UNIQUE,
-  price NUMERIC(12,2) NOT NULL CHECK (price >= 0),
-  status TEXT NOT NULL DEFAULT 'active'
-);
-```
-
-### Отношения между таблицами, PK и FK
-
-- **1:1** — редкий случай, обычно отдельная таблица с FK + UNIQUE.
-- **1:N** — самая частая связь (один customer → много orders).
-- **N:M** — через таблицу-связку (`student_courses`).
-
+Структура таблиц для примера:
 ```sql
 CREATE TABLE customers (
   id BIGSERIAL PRIMARY KEY,
@@ -208,8 +219,195 @@ CREATE TABLE orders (
 );
 ```
 
-- `PRIMARY KEY` — уникальный идентификатор строки.
-- `FOREIGN KEY` — ссылка на PK/UNIQUE другой таблицы, поддерживает ссылочную целостность.
+1) Клиенты, у которых есть хотя бы один заказ:
+```sql
+SELECT c.id, c.name
+FROM customers c
+WHERE EXISTS (
+  SELECT 1
+  FROM orders o
+  WHERE o.customer_id = c.id
+);
+```
+
+2) Клиенты, у которых заказов нет (`NOT EXISTS`):
+```sql
+SELECT c.id, c.name
+FROM customers c
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM orders o
+  WHERE o.customer_id = c.id
+);
+```
+
+Когда `EXISTS` особенно удобен:
+- при коррелированных условиях по связанной таблице;
+- когда нужно избежать ловушек с `NULL`, которые бывают в `NOT IN`.
+
+### Констрейнты (constraints)
+
+**Определение:** констрейнт — это правило целостности данных, которое БД автоматически проверяет при `INSERT/UPDATE` (а иногда и при `DELETE`, если речь о FK).
+
+Основные ограничения:
+- `PRIMARY KEY`
+- `FOREIGN KEY`
+- `UNIQUE`
+- `NOT NULL`
+- `CHECK`
+- `DEFAULT` (формально не ограничение целостности, но часть определения колонки)
+
+Это всегда «свойство столбца»?
+- **Не только.** Ограничения бывают:
+  1. **column-level** (на уровне колонки), например `email TEXT UNIQUE`;
+  2. **table-level** (на уровне таблицы), например составной `UNIQUE (country_code, phone)`.
+- Это **не отдельный “технический столбец”**, а правило в метаданных схемы.
+
+Можно ли добавить ограничение после `CREATE TABLE`?
+- **Да**, через `ALTER TABLE ... ADD CONSTRAINT ...`.
+
+#### Пример со структурой до/после
+
+Создаём таблицу без части ограничений:
+```sql
+CREATE TABLE users (
+  id BIGSERIAL,
+  email TEXT,
+  age INT,
+  country_code TEXT,
+  phone TEXT
+);
+```
+
+Добавляем ограничения после создания:
+```sql
+ALTER TABLE users
+  ADD CONSTRAINT users_pk PRIMARY KEY (id);
+
+ALTER TABLE users
+  ALTER COLUMN email SET NOT NULL;
+
+ALTER TABLE users
+  ADD CONSTRAINT users_email_uq UNIQUE (email);
+
+ALTER TABLE users
+  ADD CONSTRAINT users_age_chk CHECK (age >= 18);
+
+ALTER TABLE users
+  ADD CONSTRAINT users_country_phone_uq UNIQUE (country_code, phone);
+```
+
+Структура **после** (логически):
+```sql
+-- users(
+--   id BIGSERIAL PRIMARY KEY,
+--   email TEXT NOT NULL UNIQUE,
+--   age INT CHECK (age >= 18),
+--   country_code TEXT,
+--   phone TEXT,
+--   UNIQUE(country_code, phone)
+-- )
+```
+
+Пример внешнего ключа (ещё один констрейнт):
+```sql
+CREATE TABLE orders (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  total NUMERIC(12,2) NOT NULL CHECK (total >= 0),
+  CONSTRAINT orders_user_fk
+    FOREIGN KEY (user_id)
+    REFERENCES users(id)
+    ON DELETE RESTRICT
+);
+```
+
+### Отношения между таблицами, PK и FK
+
+**Определение:** отношение между таблицами — это логическая связь записей одной таблицы с записями другой таблицы по ключам.
+
+База этой связи:
+- `PRIMARY KEY` — уникальный идентификатор строки в «родительской» таблице.
+- `FOREIGN KEY` — ссылка на `PRIMARY KEY` (или `UNIQUE`) другой таблицы.
+
+Как строятся отношения?
+- Для **1:1** и **1:N** обычно через дополнительный FK-столбец в дочерней таблице.
+- Для **N:M** всегда нужна отдельная таблица-связка (junction table), где обычно два FK.
+
+#### 1:N (один ко многим)
+
+Один клиент — много заказов.
+
+```sql
+CREATE TABLE customers (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL
+);
+
+CREATE TABLE orders (
+  id BIGSERIAL PRIMARY KEY,
+  customer_id BIGINT NOT NULL,
+  total NUMERIC(12,2) NOT NULL CHECK (total >= 0),
+  CONSTRAINT orders_customer_fk
+    FOREIGN KEY (customer_id)
+    REFERENCES customers(id)
+);
+```
+
+#### 1:1 (один к одному)
+
+Один пользователь — один профиль.
+
+```sql
+CREATE TABLE users (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE user_profiles (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL UNIQUE,
+  birthday DATE,
+  avatar_url TEXT,
+  CONSTRAINT profiles_user_fk
+    FOREIGN KEY (user_id)
+    REFERENCES users(id)
+    ON DELETE CASCADE
+);
+```
+
+Здесь `UNIQUE(user_id)` гарантирует, что у одного `users.id` не будет двух профилей.
+
+#### N:M (многие ко многим)
+
+Один студент может учиться на многих курсах, и один курс содержит многих студентов.
+
+```sql
+CREATE TABLE students (
+  id BIGSERIAL PRIMARY KEY,
+  full_name TEXT NOT NULL
+);
+
+CREATE TABLE courses (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL
+);
+
+CREATE TABLE student_courses (
+  student_id BIGINT NOT NULL,
+  course_id BIGINT NOT NULL,
+  enrolled_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (student_id, course_id),
+  CONSTRAINT student_courses_student_fk
+    FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+  CONSTRAINT student_courses_course_fk
+    FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+);
+```
+
+Итог:
+- не каждое отношение — «через новый столбец в основной таблице»;
+- для N:M правильный путь — отдельная таблица-связка.
 
 ### CTE (Common Table Expression)
 
