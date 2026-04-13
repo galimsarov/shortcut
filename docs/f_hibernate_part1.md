@@ -137,43 +137,195 @@ public class User {
 
 ## 2. Основные интерфейсы Hibernate/JPA
 
-Ниже — классический стек Hibernate (native API) и его JPA-аналогии.
+Ниже — ключевые интерфейсы с парным указанием: Hibernate-уровень / JPA-уровень.
 
-### `Configuration` (Hibernate)
-Используется для bootstrap-конфигурации Hibernate:
-- настройка datasource, dialect, ddl-auto и т.д.;
-- регистрация entity-классов;
-- построение `SessionFactory`.
+### `Configuration` (Hibernate) / (в JPA напрямую обычно нет аналога)
 
-> В современных приложениях (Spring Boot) это часто скрыто автоконфигурацией.
+`Configuration` — это bootstrap-объект Hibernate для **сборки метаданных**:
+- читает настройки (`hibernate.cfg.xml` или programmatic properties);
+- регистрирует entity-классы;
+- строит внутреннюю модель маппинга;
+- участвует в создании `SessionFactory`.
 
-### `SessionFactory` (Hibernate)
-- Тяжёлый потокобезопасный объект уровня приложения.
-- Создаётся обычно один раз при старте.
-- Фабрика для `Session`.
+Что «под капотом» кратко:
+- формируется `ServiceRegistry` (сервисы Hibernate: connection provider, dialect resolver и т.д.);
+- строится `Metadata` (описание сущностей, таблиц, связей);
+- на основе метаданных создаётся `SessionFactory`.
 
-JPA-аналог: `EntityManagerFactory`.
+Про жизненный цикл настроек:
+- да, это настройка фреймворка **до начала рабочей фазы**;
+- после создания `SessionFactory` конфигурация считается фиксированной для этого экземпляра;
+- для изменения ключевых настроек обычно пересоздают `SessionFactory` (на практике часто это означает перезапуск приложения).
 
-### `Session` (Hibernate)
-- Основной объект для работы с БД в пределах unit of work.
-- Содержит persistence context (1st-level cache).
-- Выполняет CRUD и запросы.
+Пример (обычное Java-приложение, без Spring Boot):
 
-JPA-аналог: `EntityManager`.
+```java
+Configuration cfg = new Configuration();
 
-### `Transaction`
-- Граница атомарной операции (begin/commit/rollback).
-- Все изменения сущностей должны фиксироваться в транзакции.
+// 1) Загружаем базовую конфигурацию (hibernate.cfg.xml)
+cfg.configure("hibernate.cfg.xml");
 
-JPA: `EntityTransaction` (либо контейнерные транзакции, например `@Transactional` в Spring).
+// 2) Регистрируем сущности (можно и через XML mapping)
+cfg.addAnnotatedClass(User.class);
+cfg.addAnnotatedClass(Order.class);
 
-### `Query`
-- Абстракция запроса (HQL/JPQL/native SQL).
-- Поддерживает параметры, пагинацию, single/list result.
+// 3) Строим ServiceRegistry и SessionFactory
+StandardServiceRegistry registry = new StandardServiceRegistryBuilder()
+        .applySettings(cfg.getProperties())
+        .build();
 
-В JPA обычно используют:
-- `TypedQuery<T>` для типобезопасных JPQL-запросов,
-- `Query` для универсальных/нативных сценариев.
+SessionFactory sessionFactory = cfg.buildSessionFactory(registry);
+```
+
+### `SessionFactory` (Hibernate) / `EntityManagerFactory` (JPA)
+
+`SessionFactory` — тяжёлый потокобезопасный объект уровня приложения.
+
+Что «под капотом» кратко:
+- хранит метаданные сущностей и SQL-генерации;
+- создаёт `Session` (или `EntityManager`, если идти через JPA API);
+- содержит инфраструктурные компоненты (2nd-level cache, statistics, query plan cache — в зависимости от настроек).
+
+Практика:
+- создают один раз при старте приложения;
+- переиспользуют во всех запросах;
+- закрывают при остановке приложения.
+
+Пример создания (Java SE):
+
+```java
+Configuration cfg = new Configuration().configure();
+StandardServiceRegistry registry = new StandardServiceRegistryBuilder()
+        .applySettings(cfg.getProperties())
+        .build();
+
+SessionFactory sessionFactory = cfg.buildSessionFactory(registry);
+
+// Вариант через JPA-тип:
+EntityManagerFactory emf = sessionFactory; // SessionFactory реализует EntityManagerFactory
+```
+
+> Важно: в Hibernate 6 `SessionFactory` также выступает как JPA `EntityManagerFactory`.
+
+### `Session` (Hibernate) / `EntityManager` (JPA)
+
+`Session` — основной объект unit of work.
+
+Что значит **unit of work**:
+- открыли сессию;
+- выполнили набор связанных действий (чтение/изменение сущностей);
+- зафиксировали транзакцию;
+- закрыли сессию.
+
+Да, вы правильно понимаете: сделали запрос(ы) → закрыли `Session`; позже для новой бизнес-операции обычно берут **новую** сессию из `SessionFactory`.
+
+Что «под капотом» кратко:
+- внутри сессии живёт persistence context (1st-level cache);
+- `Session` отслеживает изменения managed-сущностей (dirty checking);
+- при `flush`/`commit` генерирует и отправляет SQL.
+
+Пример (Java SE):
+
+```java
+Session session = sessionFactory.openSession();
+// JPA-представление того же объекта:
+EntityManager em = session; // Session расширяет/реализует JPA EntityManager API
+
+try {
+    User user = session.find(User.class, 1L);
+    // ... работа с объектом
+} finally {
+    session.close();
+}
+```
+
+### `Transaction` (Hibernate) / `EntityTransaction` (JPA)
+
+Соответствие SQL-транзакции:
+- обычно это та же ACID-транзакция на уровне БД/соединения;
+- Hibernate/JPA добавляют объектную обёртку и интеграцию с lifecycle сущностей;
+- `commit()` приводит к `flush` и затем фиксации DB-транзакции (если flush mode стандартный).
+
+Пример (Java SE):
+
+```java
+Session session = sessionFactory.openSession();
+Transaction tx = session.beginTransaction(); // Hibernate API
+
+try {
+    User u = new User();
+    u.setEmail("new@mail.com");
+    session.persist(u);
+
+    tx.commit();
+    // commit() обычно возвращает void, результат операции — изменённое состояние БД
+} catch (Exception e) {
+    tx.rollback();
+    throw e;
+} finally {
+    session.close();
+}
+```
+
+JPA-вариант аналогичен:
+
+```java
+EntityManager em = emf.createEntityManager();
+EntityTransaction tx = em.getTransaction();
+tx.begin();
+// ...
+tx.commit();
+```
+
+### `Query` (Hibernate) / `TypedQuery` и `Query` (JPA)
+
+Почему это «абстракция запроса»:
+- вы работаете через объект `Query`, а не напрямую через `Statement/ResultSet`;
+- ORM сам решает, как превратить запрос в SQL, как связать параметры и как материализовать результат.
+
+Разница между HQL / JPQL / native SQL:
+- **HQL** — язык запросов Hibernate к сущностям и их полям;
+- **JPQL** — стандартный JPA-язык, очень близок к HQL;
+- **native SQL** — обычный SQL конкретной БД (PostgreSQL, Oracle и т.д.).
+
+Про «транзакционный запрос» и «обычный запрос»:
+- технически `query` — это способ выполнить чтение/изменение;
+- транзакция (`transaction`) — это граница атомарности;
+- `SELECT` можно делать и без явной транзакции (зависит от окружения), но для `INSERT/UPDATE/DELETE` транзакция практически обязательна.
+
+Пример query в Java SE:
+
+```java
+Session session = sessionFactory.openSession();
+Transaction tx = session.beginTransaction();
+
+try {
+    // 1) JPQL/HQL: результат — список сущностей User
+    List<User> users = session
+            .createQuery("select u from User u where u.status = :st", User.class)
+            .setParameter("st", Status.ACTIVE)
+            .getResultList();
+
+    // 2) Update query: результат — количество затронутых строк (int)
+    int updated = session
+            .createMutationQuery("update User u set u.status = :newSt where u.status = :oldSt")
+            .setParameter("newSt", Status.INACTIVE)
+            .setParameter("oldSt", Status.BANNED)
+            .executeUpdate();
+
+    tx.commit();
+} catch (Exception e) {
+    tx.rollback();
+    throw e;
+} finally {
+    session.close();
+}
+```
+
+Типы результатов у query:
+- `getSingleResult()` → один объект (или исключение, если 0/много);
+- `getResultList()` → `List<T>`;
+- `executeUpdate()` → `int` (число изменённых строк).
 
 ---
 
