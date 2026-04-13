@@ -11,19 +11,127 @@
 
 Идея: работать в коде с объектами (`User`, `Order`), а не писать SQL для каждой операции вручную.
 
-### Что даёт ORM
-- уменьшает количество шаблонного JDBC-кода;
-- автоматически маппит строки таблиц в Java-объекты и обратно;
-- поддерживает жизненный цикл сущностей (managed/detached и т.д.);
-- даёт декларативные транзакции, кэш, механизмы загрузки графа сущностей.
+### Почему ORM уменьшает шаблонный JDBC-код (наглядно)
 
-### Hibernate и JPA — в чём разница
-- **JPA (Jakarta Persistence API)** — это **спецификация** (контракты: интерфейсы, аннотации, правила).
-- **Hibernate** — это **реализация** JPA + дополнительные возможности сверх спецификации.
+#### Что обычно нужно сделать в чистом JDBC
+Для одного простого `SELECT user by id` обычно нужны шаги:
+1. Открыть `Connection`.
+2. Подготовить `PreparedStatement` с SQL.
+3. Проставить параметры.
+4. Выполнить `executeQuery()`.
+5. Руками вычитать `ResultSet`.
+6. Руками собрать объект `User` из колонок.
+7. Закрыть ресурсы (или аккуратно обернуть в try-with-resources).
 
-На практике:
-- код пишут в терминах JPA (`EntityManager`, `@Entity`),
-- в runtime часто используют Hibernate как provider.
+```java
+String sql = "SELECT id, email, status FROM users WHERE id = ?";
+
+try (Connection c = dataSource.getConnection();
+     PreparedStatement ps = c.prepareStatement(sql)) {
+
+    ps.setLong(1, userId);
+
+    try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+            User user = new User();
+            user.setId(rs.getLong("id"));
+            user.setEmail(rs.getString("email"));
+            user.setStatus(Status.valueOf(rs.getString("status")));
+            return user;
+        }
+        return null;
+    }
+}
+```
+
+#### То же через JPA/Hibernate
+```java
+User user = entityManager.find(User.class, userId);
+```
+
+ORM берёт на себя connection/SQL mapping boilerplate, а разработчик работает с сущностью.
+
+### Автоматический маппинг: таблица ↔ сущность
+
+Пример таблицы:
+
+```sql
+CREATE TABLE users (
+  id BIGINT PRIMARY KEY,
+  email VARCHAR(320) NOT NULL UNIQUE,
+  status VARCHAR(32) NOT NULL
+);
+```
+
+Пример entity:
+
+```java
+@Entity
+@Table(name = "users")
+public class User {
+    @Id
+    private Long id;
+
+    @Column(nullable = false, unique = true, length = 320)
+    private String email;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 32)
+    private Status status;
+}
+```
+
+Соответствие:
+- `users.id` ↔ `User.id`
+- `users.email` ↔ `User.email`
+- `users.status` ↔ `User.status`
+
+### Жизненный цикл сущности: это термин ORM/JPA, а не SQL
+
+Да, в SQL/реляционной БД нет понятий `managed`/`detached`.
+Эти состояния существуют на уровне **ORM-провайдера** (Hibernate) и API **JPA**,
+то есть в persistence context (`Session`/`EntityManager`).
+
+Кратко:
+1. **Transient** — новый объект в памяти, ORM его не отслеживает.
+2. **Managed** — объект в persistence context, изменения ловятся через dirty checking.
+3. **Detached** — объект был managed, но вышел из контекста.
+4. **Removed** — объект помечен на удаление.
+
+### JPA: это ORM или нет?
+
+Корректнее так:
+- **JPA — не отдельный ORM-фреймворк**, а **стандарт (спецификация) ORM для Java**.
+- Реальные ORM-операции выполняет конкретная реализация (provider): Hibernate, EclipseLink и т.д.
+
+### Какие ещё есть подходы/спецификации кроме JPA
+
+- **Jakarta Data** (новее, более высокоуровневый подход к репозиториям; часто поверх JPA-провайдеров).
+- Исторически существовали и vendor-specific API (например, чистый Hibernate API без JPA).
+- Также есть **не-JPA ORM/mapper** инструменты (например, MyBatis — SQL mapper, а не классический ORM).
+
+Почему JPA чаще выбирают:
+- единый стандарт и переносимость кода между провайдерами;
+- сильная экосистема (Spring Data JPA, большое количество материалов);
+- удобство найма/поддержки: паттерны и API знакомы большинству Java-разработчиков.
+
+### Hibernate относительно JPA: что ещё есть и почему Hibernate популярен
+
+Другие популярные JPA-провайдеры:
+- **EclipseLink**
+- **OpenJPA**
+
+Почему Hibernate особенно популярен:
+- де-факто стандарт в большом числе enterprise/Spring-проектов;
+- богатые возможности сверх JPA (тонкие настройки fetch/query/cache);
+- зрелость, большая документация/комьюнити, много production-кейсов.
+
+### Аналоги ORM-подхода (кратко)
+
+- **Java:** EclipseLink, OpenJPA, MyBatis (частичный аналог: mapper-подход).
+- **Python:** SQLAlchemy, Django ORM.
+- **.NET:** Entity Framework.
+- **Node.js:** TypeORM, Prisma (ближе к ORM/ORM-like).
 
 ---
 
