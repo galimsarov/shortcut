@@ -177,6 +177,27 @@ StandardServiceRegistry registry = new StandardServiceRegistryBuilder()
 SessionFactory sessionFactory = cfg.buildSessionFactory(registry);
 ```
 
+Разбор `configure()` и источников настроек:
+- `new Configuration().configure()` — допустимый сокращённый вызов; Hibernate ищет дефолтный `hibernate.cfg.xml`.
+- `cfg.configure("hibernate.cfg.xml")` — явное указание имени ресурса (тот же результат, если имя стандартное).
+- По умолчанию `hibernate.cfg.xml` кладут в classpath (обычно `src/main/resources/hibernate.cfg.xml`), чтобы файл попал в корень classpath после сборки.
+- Конфигурацию можно задавать и без XML:
+  - через `hibernate.properties` в classpath;
+  - программно (`cfg.setProperty(...)`, `StandardServiceRegistryBuilder.applySetting(...)`);
+  - через JPA `persistence.xml` + свойства провайдера.
+
+Мини-пример programmatic-конфигурации:
+
+```java
+Configuration cfg = new Configuration()
+        .addAnnotatedClass(User.class)
+        .setProperty("hibernate.connection.url", "jdbc:postgresql://localhost:5432/app")
+        .setProperty("hibernate.connection.username", "app")
+        .setProperty("hibernate.connection.password", "secret")
+        .setProperty("hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect")
+        .setProperty("hibernate.hbm2ddl.auto", "validate");
+```
+
 ### `SessionFactory` (Hibernate) / `EntityManagerFactory` (JPA)
 
 `SessionFactory` — тяжёлый потокобезопасный объект уровня приложения.
@@ -238,6 +259,14 @@ try {
     session.close();
 }
 ```
+
+Что чаще использовать: `openSession()` или `createEntityManager()`?
+- В современных enterprise-проектах обычно чаще пишут через **JPA (`EntityManager`)**:
+  - переносимость между провайдерами;
+  - стандартный API для Spring Data/Jakarta EE.
+- `Session` используют, когда нужны Hibernate-специфичные возможности
+  (тонкие настройки, специфичные API, оптимизации).
+- На практике это не «или/или»: в коде можно работать через JPA и при необходимости делать `unwrap(Session.class)`.
 
 ### `Transaction` (Hibernate) / `EntityTransaction` (JPA)
 
@@ -343,6 +372,44 @@ try {
 1. Гарантия согласованности объектного графа.
 2. Меньше лишних запросов в рамках одной транзакции.
 3. Возможность писать «object-oriented» логику без ручного SQL-update на каждое поле.
+
+### Можно ли посмотреть/изменить состояние Persistence Context через `Session`?
+Да, частично.
+
+Что можно сделать штатно:
+- `session.contains(entity)` — проверить, находится ли объект в контексте;
+- `session.detach(entity)` / `session.evict(entity)` — убрать конкретную сущность из контекста;
+- `session.clear()` — очистить весь persistence context;
+- `session.flush()` — принудительно отправить накопленные изменения в БД.
+
+Пример с логированием и управлением контекстом:
+
+```java
+Session session = sessionFactory.openSession();
+Transaction tx = session.beginTransaction();
+
+try {
+    User user = session.find(User.class, 1L);
+    System.out.println("managed before detach = " + session.contains(user)); // true
+
+    session.detach(user); // или session.evict(user)
+    System.out.println("managed after detach = " + session.contains(user)); // false
+
+    user.setEmail("detached@mail.com"); // change не будет автоматически сохранён
+
+    session.merge(user); // возвращает managed-экземпляр с применёнными изменениями
+    session.flush();
+
+    tx.commit();
+} catch (Exception e) {
+    tx.rollback();
+    throw e;
+} finally {
+    session.close();
+}
+```
+
+> Важно: стандартный API не даёт удобного "списка всех сущностей в контексте" для прод-кода; обычно используют `contains`, логирование SQL и Hibernate statistics.
 
 ---
 
