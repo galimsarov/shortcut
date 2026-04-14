@@ -732,34 +732,149 @@ EntityManager является сердцем JPA и то, что поистин
 
 ## 6. Стратегии маппинга наследования
 
-В JPA наследование задаётся через `@Inheritance(strategy = ...)`.
+### Что это вообще такое
+
+Стратегии маппинга наследования — это правила, по которым ORM раскладывает Java-иерархию классов
+(базовый класс + наследники) на таблицы реляционной БД.
+
+Проблема, которую они решают:
+- в Java есть наследование (`Vehicle -> Car`, `Vehicle -> Truck`),
+- в SQL нет прямого механизма наследования классов,
+- поэтому JPA/Hibernate должны выбрать схему хранения этих типов.
+
+Стратегия задаётся на базовом классе:
+
+```java
+@Entity
+@Inheritance(strategy = InheritanceType.SINGLE_TABLE) // или JOINED / TABLE_PER_CLASS
+public abstract class Vehicle {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String model;
+}
+```
 
 ### `SINGLE_TABLE`
-- Вся иерархия хранится в одной таблице.
-- Тип сущности различается по discriminator-колонке.
 
-**Плюсы:** быстрые запросы без JOIN между таблицами.
-**Минусы:** много nullable-колонок, слабее нормализация.
+Все классы иерархии лежат в одной таблице, тип строки различается discriminator-колонкой.
+
+Пример:
+
+```java
+@Entity
+@Inheritance(strategy = InheritanceType.SINGLE_TABLE)
+@DiscriminatorColumn(name = "vehicle_type")
+public abstract class Vehicle {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String model;
+}
+
+@Entity
+@DiscriminatorValue("CAR")
+public class Car extends Vehicle {
+    private Integer seatCount;
+}
+
+@Entity
+@DiscriminatorValue("TRUCK")
+public class Truck extends Vehicle {
+    private BigDecimal payloadCapacity;
+}
+```
+
+Как выглядит таблица (упрощённо):
+- `vehicles(id, model, vehicle_type, seat_count, payload_capacity)`
+
+**Плюсы:** быстрые select без join между таблицами.
+**Минусы:** много nullable-колонок для полей, неактуальных конкретному подтипу.
 
 ### `JOINED`
-- Базовые поля в базовой таблице.
-- Поля наследников в отдельных таблицах.
-- Для чтения наследника нужны JOIN.
 
-**Плюсы:** нормализованная схема.
-**Минусы:** более тяжёлые запросы.
+Базовые поля в базовой таблице, поля наследников — в отдельных таблицах, связанных по PK/FK.
+
+Пример:
+
+```java
+@Entity
+@Inheritance(strategy = InheritanceType.JOINED)
+public abstract class Vehicle {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String model;
+}
+
+@Entity
+@Table(name = "cars")
+@PrimaryKeyJoinColumn(name = "vehicle_id")
+public class Car extends Vehicle {
+    private Integer seatCount;
+}
+
+@Entity
+@Table(name = "trucks")
+@PrimaryKeyJoinColumn(name = "vehicle_id")
+public class Truck extends Vehicle {
+    private BigDecimal payloadCapacity;
+}
+```
+
+Как выглядит схема (упрощённо):
+- `vehicles(id, model)`
+- `cars(vehicle_id, seat_count)`
+- `trucks(vehicle_id, payload_capacity)`
+
+**Плюсы:** нормализованная схема, меньше nullable-полей.
+**Минусы:** чтение наследников требует join.
 
 ### `TABLE_PER_CLASS`
-- Отдельная таблица на каждый конкретный класс.
-- Базовый класс обычно абстрактный.
 
-**Плюсы:** нет nullable-полей, простая структура на класс.
-**Минусы:** полиморфные запросы дорогие (часто UNION).
+Каждый конкретный класс хранится в своей таблице, базовый обычно абстрактный.
+
+Пример:
+
+```java
+@Entity
+@Inheritance(strategy = InheritanceType.TABLE_PER_CLASS)
+public abstract class Vehicle {
+    @Id
+    @GeneratedValue(strategy = GenerationType.AUTO)
+    private Long id;
+
+    private String model;
+}
+
+@Entity
+@Table(name = "cars")
+public class Car extends Vehicle {
+    private Integer seatCount;
+}
+
+@Entity
+@Table(name = "trucks")
+public class Truck extends Vehicle {
+    private BigDecimal payloadCapacity;
+}
+```
+
+Как выглядит схема (упрощённо):
+- `cars(id, model, seat_count)`
+- `trucks(id, model, payload_capacity)`
+
+**Плюсы:** нет nullable-полей, каждая таблица самодостаточна.
+**Минусы:** полиморфные запросы по базовому типу (`select v from Vehicle v`) часто приводят к `UNION` и могут быть дороже.
 
 ### Практический выбор
-- По умолчанию часто выбирают `SINGLE_TABLE` для производительности.
-- `JOINED` выбирают, когда важна нормализация и чистая модель данных.
-- `TABLE_PER_CLASS` используют реже, точечно.
+- `SINGLE_TABLE` — часто default для производительности и простоты.
+- `JOINED` — когда важна чистая/нормализованная схема данных.
+- `TABLE_PER_CLASS` — реже, обычно для узких сценариев.
 
 ---
 
