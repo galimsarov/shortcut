@@ -882,62 +882,175 @@ public class Truck extends Vehicle {
 
 ### 7.1 Enum
 
-Рекомендуемый вариант:
+`Enum` в Java можно хранить в БД двумя основными способами через `@Enumerated`:
+- `EnumType.STRING` — в колонку пишется **имя** enum-константы (`ACTIVE`, `BANNED`);
+- `EnumType.ORDINAL` — в колонку пишется **порядковый номер** enum-константы (`0`, `1`, `2`).
+
+Пример enum:
+
 ```java
-@Enumerated(EnumType.STRING)
-private Status status;
+public enum UserStatus {
+    NEW,
+    ACTIVE,
+    BLOCKED
+}
 ```
 
-Почему `STRING` лучше `ORDINAL`:
-- устойчиво к изменению порядка enum-констант;
-- читаемо в БД;
-- безопаснее при эволюции кода.
+Пример entity с комментариями:
+
+```java
+@Entity
+@Table(name = "users")
+public class User {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    // Рекомендуемый вариант: хранится текст "NEW" / "ACTIVE" / "BLOCKED"
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 32)
+    private UserStatus status;
+}
+```
+
+Почему обычно рекомендуют `STRING`:
+- безопасно при изменении порядка констант в enum;
+- данные в БД читаемы человеком;
+- меньше риск «тихой» порчи данных при эволюции кода.
+
+Почему `ORDINAL` опасен:
+- если поменять порядок enum-констант, старые числа начнут означать другие состояния.
+
+---
 
 ### 7.2 Коллекции базовых типов — `@ElementCollection`
 
-Используется, когда нужно хранить набор value-элементов (не entity), например список тегов.
+Что такое «value-элементы (не entity)»:
+- это значения **без собственного id и самостоятельной жизни** в модели;
+- примеры: `Set<String> tags`, `List<Integer> scores`, `Map<String, String> settings`;
+- ORM хранит их в отдельной коллекционной таблице, но это не отдельные entity-классы.
+
+Пример: у пользователя есть набор тегов и список языков.
 
 ```java
-@ElementCollection
-@CollectionTable(name = "user_tags", joinColumns = @JoinColumn(name = "user_id"))
-@Column(name = "tag")
-private Set<String> tags = new HashSet<>();
+@Entity
+@Table(name = "users")
+public class User {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    // Набор строковых тегов (без отдельной entity Tag)
+    @ElementCollection
+    @CollectionTable(name = "user_tags", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "tag", nullable = false)
+    private Set<String> tags = new HashSet<>();
+
+    // Список предпочитаемых языков (порядок важен)
+    @ElementCollection
+    @CollectionTable(name = "user_languages", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "language", nullable = false)
+    @OrderColumn(name = "lang_order")
+    private List<String> languages = new ArrayList<>();
+}
 ```
 
-Особенности:
-- элементы не имеют собственного id как entity;
-- обычно хранятся в отдельной таблице коллекции;
-- lifecycle коллекции привязан к владельцу-entity.
+Как это хранится:
+- `users(id, email)`
+- `user_tags(user_id, tag)`
+- `user_languages(user_id, lang_order, language)`
+
+Когда `@ElementCollection` уместен:
+- когда нет необходимости ссылаться на элемент как на отдельную сущность;
+- когда не нужен отдельный lifecycle, отдельные связи и отдельные запросы к элементу.
+
+---
 
 ### 7.3 Составной ключ — `@IdClass` и `@EmbeddedId`
 
-#### `@IdClass`
-- Поля ключа объявляются прямо в entity.
-- Отдельный класс key служит «зеркалом» полей id.
+Составной ключ = первичный ключ из **нескольких колонок**, например `(order_id, product_id)`.
 
-Подходит, когда хочется обращаться к частям ключа как к обычным полям entity.
+Это типично для таблиц-связок, исторических таблиц, доменных ключей.
 
-#### `@EmbeddedId`
-- Ключ оформлен как value-объект (`@Embeddable`) и хранится единым полем.
-- Более объектно-ориентированный и часто более чистый дизайн.
+#### Вариант 1: `@IdClass`
+
+Идея:
+- ключевые поля объявляются прямо в entity как несколько `@Id`;
+- отдельно создаётся key-класс (`implements Serializable`) с теми же полями.
 
 ```java
-@Embeddable
-public class OrderItemId {
+// Класс ключа (имена и типы полей должны совпадать с @Id-полями entity)
+public class OrderItemId implements Serializable {
     private Long orderId;
     private Long productId;
+
+    public OrderItemId() {}
+
+    // equals/hashCode обязательны для корректной работы ключа
+    // (обычно генерируются IDE/Lombok)
 }
 
 @Entity
+@Table(name = "order_items")
+@IdClass(OrderItemId.class)
 public class OrderItem {
-    @EmbeddedId
-    private OrderItemId id;
+    @Id
+    @Column(name = "order_id")
+    private Long orderId;
+
+    @Id
+    @Column(name = "product_id")
+    private Long productId;
+
+    @Column(name = "quantity", nullable = false)
+    private Integer quantity;
 }
 ```
 
-### Что выбрать для составного ключа
-- Нужна явная работа с отдельными id-полями в entity → `@IdClass`.
-- Нужен цельный value object ключа → `@EmbeddedId`.
+Плюс `@IdClass`: удобно обращаться к полям ключа напрямую (`entity.getOrderId()`).
+
+#### Вариант 2: `@EmbeddedId`
+
+Идея:
+- составной ключ оформляется как value-объект (`@Embeddable`);
+- в entity хранится единое поле `id` с этим типом.
+
+```java
+@Embeddable
+public class OrderItemKey implements Serializable {
+    @Column(name = "order_id")
+    private Long orderId;
+
+    @Column(name = "product_id")
+    private Long productId;
+
+    public OrderItemKey() {}
+
+    // equals/hashCode обязательны
+    // (обычно генерируются IDE/Lombok)
+}
+
+@Entity
+@Table(name = "order_items")
+public class OrderItem {
+    @EmbeddedId
+    private OrderItemKey id;
+
+    @Column(name = "quantity", nullable = false)
+    private Integer quantity;
+}
+```
+
+Плюс `@EmbeddedId`: ключ моделируется как цельный объект, чаще более «чистая» OO-модель.
+
+#### Что выбрать
+- `@IdClass` — когда удобнее иметь ключевые части как отдельные поля entity.
+- `@EmbeddedId` — когда ключ логически целостен и хочется держать его как value object.
+
+Оба варианта корректны и широко используются.
 
 ---
 
