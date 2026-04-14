@@ -475,14 +475,126 @@ private String email;
 
 ### Варианты entity-моделей
 
-#### `@Embeddable`
-Класс-значение без собственного id, встраивается в entity через `@Embedded`.
+#### `@Embeddable` + `@Embedded`
 
-Пример: `Address` (city, street, zip) внутри `User`.
+`@Embeddable` — это value-тип, который **не является отдельной entity**.
+
+Важно: у `@Embeddable` действительно нет собственного `@Id`, и он не живёт как самостоятельная строка
+в своей таблице. Но его поля **хранятся в БД** — обычно в таблице владельца (`@Embedded`) или в таблице коллекции (если `@ElementCollection`).
+
+Полноценный пример:
+
+```java
+@Embeddable
+public class Address {
+    @Column(name = "street", nullable = false)
+    private String street;
+
+    @Column(name = "city", nullable = false)
+    private String city;
+
+    @Column(name = "zip_code", nullable = false, length = 20)
+    private String zipCode;
+
+    protected Address() {}
+
+    public Address(String street, String city, String zipCode) {
+        this.street = street;
+        this.city = city;
+        this.zipCode = zipCode;
+    }
+}
+
+@Entity
+@Table(name = "users")
+public class User {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    @Embedded
+    private Address address;
+}
+```
+
+Как это выглядит в таблице `users`:
+- `id`
+- `email`
+- `street`
+- `city`
+- `zip_code`
+
+Зачем вводить `Embeddable`, а не делать «обычную сущность»:
+- это **value object** без собственной идентичности (адрес как часть пользователя);
+- меньше лишних таблиц/джойнов, если отдельная жизнь объекта не нужна;
+- лучшее переиспользование повторяющегося набора полей (`Address`, `Money`, `AuditInfo`) в нескольких entity.
+
+Когда всё же лучше обычная entity:
+- когда объект должен существовать отдельно, иметь свой id, собственный lifecycle и ссылки от других сущностей.
 
 #### `@MappedSuperclass`
-Базовый класс с общими полями маппинга (id, audit-поля),
-но сам по себе не является отдельной сущностью/таблицей.
+
+`@MappedSuperclass` — базовый класс с полями маппинга, который **не является отдельной таблицей/сущностью**,
+но его поля наследуются entity-классами.
+
+Полноценный пример:
+
+```java
+@MappedSuperclass
+public abstract class BaseEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    protected Long id;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    protected Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    protected Instant updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        Instant now = Instant.now();
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        this.updatedAt = Instant.now();
+    }
+}
+
+@Entity
+@Table(name = "users")
+public class User extends BaseEntity {
+    @Column(nullable = false, unique = true)
+    private String email;
+}
+
+@Entity
+@Table(name = "orders")
+public class Order extends BaseEntity {
+    @Column(name = "total_amount", nullable = false)
+    private BigDecimal totalAmount;
+}
+```
+
+Результат в БД:
+- таблица `users` содержит `id`, `created_at`, `updated_at`, `email`;
+- таблица `orders` содержит `id`, `created_at`, `updated_at`, `total_amount`;
+- отдельной таблицы `base_entity` нет.
+
+Зачем вводить `@MappedSuperclass`, а не дублировать всё в каждой сущности:
+- исключаем копипасту (id, аудит, технические поля);
+- централизуем общую логику (`@PrePersist`, `@PreUpdate`);
+- упрощаем сопровождение: меняем одно место, а не 15 сущностей.
+
+Когда лучше не использовать:
+- если по базовому типу нужны полиморфные запросы (`select b from BaseEntity b`) — для этого чаще подходит inheritance mapping через `@Inheritance`, а не `@MappedSuperclass`.
 
 ---
 
