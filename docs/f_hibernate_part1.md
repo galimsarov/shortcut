@@ -675,6 +675,60 @@ try {
 - распространённая практика: базово писать на JPA API и локально делать `unwrap(Session.class)`, где нужны Hibernate-специфичные фичи.
 
 ---
+❓Что такое EntityManager в JPA и за что он отвечает?
+
+EntityManager (https://jakarta.ee/specifications/persistence/3.2/apidocs/jakarta.persistence/jakarta/persistence/entitymanager) является основным интерфейс JPA для работы с сущностями и их жизненным циклом. В сути своей он отвечает за сохранение объектов в базу данных, поиск объектов по идентификатору, обновление и удаление сущностей, управление состоянием объектов (жизненный цикл), работу с транзакциями.
+
+
+Проще говоря, Entity Manager это мост между Java-объектами и базой данных.
+
+В рамках жизненного цикла сущности в JPA могут обладать различным состоянием:
+- New — объект создан, но еще не добавлен в контекст и не сохранен
+- Managed — объект связан с Entity Manager (добавлен в контекст), его изменения отслеживаются
+- Detached — объект отсоединен от контекста
+- Removed — объект помечен на удаление
+
+EntityManager управляет этими состояниями и синхронизирует изменения с базой данных.
+
+Основные операции Entity Manager:
+
+🔹Создание и сохранение сущности
+```java
+EntityManager em = entityManagerFactory.createEntityManager();
+em.getTransaction().begin();
+
+User user = new User();
+user.setName("Alice");
+
+em.persist(user); // сохраняет сущность в базу
+em.getTransaction().commit();
+```
+🔹Поиск сущности
+```java
+EntityManager em = entityManagerFactory.createEntityManager();
+User user = em.find(User.class, 1L); // ищет User с ID = 1
+```
+🔹Обновление сущности
+```java
+EntityManager em = entityManagerFactory.createEntityManager();
+em.getTransaction().begin();
+user.setName("Bob");
+em.getTransaction().commit(); // изменения автоматически сохраняются
+```
+🔹Удаление сущности
+```java
+EntityManager em = entityManagerFactory.createEntityManager();
+em.getTransaction().begin();
+em.remove(user);
+em.getTransaction().commit();
+```
+📌 Вывод
+EntityManager является сердцем JPA и то, что поистине необходимо знать. Он позволяет управлять жизненным циклом сущностей, сохранять, обновлять и удалять объекты, выполнять запросы к базе через JPQL или нативный SQL, работать с транзакциями и отслеживать изменения автоматически.
+
+
+Без него невозможно построить полноценную ORM-архитектуру основанную на JPA.
+
+---
 
 ## 6. Стратегии маппинга наследования
 
