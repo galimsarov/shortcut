@@ -627,6 +627,53 @@ em.getTransaction().commit();
 em.close();
 ```
 
+### Hibernate-вариант: `Session` (часто используемые методы)
+
+Аналогичные операции через Hibernate API:
+- `persist(entity)` — сохранить новую сущность;
+- `get(Entity.class, id)` / `find(Entity.class, id)` — загрузить по id;
+- `merge(entity)` — слить detached-состояние;
+- `remove(entity)` — удалить сущность;
+- `flush()` — синхронизировать контекст с БД;
+- `clear()` / `evict(entity)` — очистить контекст полностью или частично;
+- `createQuery(...)`, `createMutationQuery(...)`, `createNativeQuery(...)` — запросы.
+
+Мини-пример через `Session`:
+
+```java
+Session session = sessionFactory.openSession();
+Transaction tx = session.beginTransaction();
+
+try {
+    User u = new User();
+    u.setEmail("a@b.com");
+    session.persist(u);
+
+    User loaded = session.get(User.class, u.getId());
+    loaded.setEmail("new@b.com");
+
+    session.flush();
+    tx.commit();
+} catch (Exception e) {
+    tx.rollback();
+    throw e;
+} finally {
+    session.close();
+}
+```
+
+### Что чаще на практике: Spring Data JPA, `EntityManager` или `Session`?
+
+Кратко:
+- да, в большинстве современных enterprise-проектов чаще всего работают через **Spring Data JPA** (репозитории + JPA-стек).
+- в **чистой Java (без Spring)** чаще выбирают **JPA `EntityManager`** как основной API, если нужна переносимость и стандартный подход.
+- **`Session`** выбирают, когда проект осознанно завязан на Hibernate и нужны его специфичные возможности/тонкие оптимизации.
+
+Почему так:
+- `EntityManager` = стандарт, проще сменить провайдера, легче поддерживать vendor-neutral код.
+- `Session` = глубже доступ к Hibernate-фичам (batch/fetch tuning, специфичные настройки, расширенные API).
+- распространённая практика: базово писать на JPA API и локально делать `unwrap(Session.class)`, где нужны Hibernate-специфичные фичи.
+
 ---
 
 ## 6. Стратегии маппинга наследования
