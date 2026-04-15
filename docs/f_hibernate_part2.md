@@ -8,23 +8,88 @@
 
 ### Какие бывают связи
 
-В JPA основные типы связей:
+В JPA есть 4 базовых типа связей (сопоставим «человеческое» название и аннотации):
 
-1. **`@OneToOne`** — один к одному.
-2. **`@OneToMany` / `@ManyToOne`** — один ко многим / многие к одному.
-3. **`@ManyToMany`** — многие ко многим (обычно через join table).
+1. **Один к одному** → `@OneToOne`
+2. **Один ко многим** → `@OneToMany`
+3. **Многие к одному** → `@ManyToOne`
+4. **Многие ко многим** → `@ManyToMany`
 
-Примеры:
-- `User` ↔ `Profile` — `@OneToOne`.
-- `Department` → `Employee` — `@OneToMany` и обратная `@ManyToOne`.
-- `Student` ↔ `Course` — `@ManyToMany`.
+Ниже — не только названия сущностей, но и структура таблиц (PK/FK), чтобы было понятно, как связь живет в БД.
+
+#### 1) Один к одному (`@OneToOne`)
+
+Пример: `users` ↔ `profiles` (у пользователя один профиль, у профиля один пользователь).
+
+**Таблицы:**
+- `users(id PK, email, ...)`
+- `profiles(id PK, user_id FK UNIQUE -> users.id, first_name, last_name, ...)`
+
+`UNIQUE` на `profiles.user_id` обеспечивает именно 1:1 на уровне БД.
+
+**Классы (идея):**
+- `User { Long id; Profile profile; }`
+- `Profile { Long id; User user; }`
+
+#### 2) Один ко многим / многие к одному (`@OneToMany` + `@ManyToOne`)
+
+Пример: `departments` ↔ `employees` (в одном департаменте много сотрудников, у сотрудника один департамент).
+
+**Таблицы:**
+- `departments(id PK, name, ...)`
+- `employees(id PK, department_id FK -> departments.id, full_name, ...)`
+
+FK лежит в таблице «многие» (`employees`), поэтому именно она физически хранит связь.
+
+**Классы (идея):**
+- `Department { Long id; List<Employee> employees; }`
+- `Employee { Long id; Department department; }`
+
+#### 3) Многие ко многим (`@ManyToMany`)
+
+Пример: `students` ↔ `courses`.
+
+**Таблицы:**
+- `students(id PK, name, ...)`
+- `courses(id PK, title, ...)`
+- `student_course(student_id FK -> students.id, course_id FK -> courses.id, PK(student_id, course_id))`
+
+Связь хранится в отдельной таблице-связке (`join table`).
+
+**Классы (идея):**
+- `Student { Long id; Set<Course> courses; }`
+- `Course { Long id; Set<Student> students; }`
+
+> Практический совет: если у связи появляются свои поля (`enrolled_at`, `grade`, `status`), почти всегда лучше не `@ManyToMany`, а отдельная сущность (например, `Enrollment`) и две связи `@ManyToOne`.
+
+### Однонаправленные и двунаправленные (bidirectional) связи
+
+Перед `mappedBy` важно договориться о терминах:
+
+- **Unidirectional (однонаправленная)**: только одна сущность «знает» о другой.  
+  Пример: `Order -> Customer` (в `Order` есть поле `customer`, в `Customer` нет коллекции заказов).
+- **Bidirectional (двунаправленная)**: обе сущности ссылаются друг на друга.  
+  Пример: `Order -> Customer` и `Customer -> List<Order>`.
+
+Альтернатива bidirectional — оставить связь однонаправленной и получать обратную сторону через запрос (`select o from Order o where o.customer.id = :id`).
+
+Когда что выбирать:
+- **Unidirectional** — проще модель, меньше риска рассинхронизации двух сторон в памяти, удобна когда обратная навигация редко нужна.
+- **Bidirectional** — удобнее навигация в коде и бизнес-логиках «туда-обратно», но нужно поддерживать консистентность обеих сторон (например, helper-методами `addOrder/removeOrder`).
 
 ### Владелец связи (owning side) и `mappedBy`
 
-Ключевая идея: **только owning side управляет внешним ключом/записью в join table**.
+Ключевая идея: **только owning side управляет внешним ключом или записью в join table**.
 
-- В `@OneToMany/@ManyToOne` owning side обычно `@ManyToOne` (там где `@JoinColumn`).
-- В bidirectional-связи другая сторона ставит `mappedBy = "..."`.
+Важно: термин **owning side** — это термин JPA/Hibernate (ORM-мэппинга), а не «официальный термин БД».  
+Однако он напрямую связан со структурой БД: owning side — это сторона, через которую ORM записывает FK/строки в таблицу связи.
+
+Как понять, кто owner:
+
+1. В bidirectional `@OneToMany/@ManyToOne` owner почти всегда сторона `@ManyToOne`, где стоит `@JoinColumn`.
+2. Сторона с `mappedBy = "..."` — **не owner** (inverse side, read/navigation side).
+3. В `@ManyToMany` owner — сторона без `mappedBy` (обычно та, где объявлен `@JoinTable`).
+4. В unidirectional связи с `@JoinColumn` owner очевиден: это единственная сторона, где описана колонка связи.
 
 ```java
 @Entity
@@ -40,6 +105,12 @@ class Customer {
     private List<Order> orders = new ArrayList<>();
 }
 ```
+
+В примере выше:
+- owner = `Order.customer` (там `@JoinColumn(name = "customer_id")`);
+- inverse side = `Customer.orders` (там `mappedBy = "customer"`).
+
+На уровне таблиц это видно так: FK `orders.customer_id` физически хранится в `orders`.
 
 ### Lazy / Eager загрузка
 
@@ -71,15 +142,80 @@ private Customer customer;
 - неожиданные дополнительные SQL;
 - риск каскадного роста графа и деградации производительности.
 
+#### Пример: что реально загрузится (без Spring, чистый JPA/Hibernate)
+
+```java
+EntityManager em = emf.createEntityManager();
+em.getTransaction().begin();
+
+Order order = em.find(Order.class, 1L); // SQL к orders
+System.out.println(order.getId());
+
+// customer LAZY: до этого момента customer не загружался
+System.out.println(order.getCustomer().getName()); // дополнительный SQL к customers
+
+em.getTransaction().commit();
+em.close();
+```
+
+Если сделать `@ManyToOne(fetch = FetchType.EAGER)`, провайдер обычно подтянет `customer` сразу (join или доп. select при find/load).
+
+#### `LazyInitializationException`: отдельный пример
+
+Типичный сценарий ошибки:
+
+```java
+EntityManager em = emf.createEntityManager();
+em.getTransaction().begin();
+
+Customer customer = em.find(Customer.class, 10L); // orders = LAZY
+
+em.getTransaction().commit();
+em.close(); // persistence context закрыт
+
+// Ошибка: коллекция orders не может инициализироваться вне сессии
+System.out.println(customer.getOrders().size()); // LazyInitializationException
+```
+
+Как избежать (без Spring):
+
+1. **Инициализировать внутри транзакции**, пока `EntityManager` открыт:
+   - обратиться к коллекции (`customer.getOrders().size()`),
+   - или выполнить `JOIN FETCH` запрос.
+2. **Сразу читать DTO проекцией**, а не тянуть ленивые сущности за границу транзакции.
+3. **Точечно использовать fetch join в запросе**, а не глобально переводить всё в `EAGER`.
+
+Пример с `JOIN FETCH`:
+
+```java
+Customer customer = em.createQuery(
+        "select c from Customer c left join fetch c.orders where c.id = :id",
+        Customer.class)
+    .setParameter("id", 10L)
+    .getSingleResult();
+
+em.close();
+// orders уже загружены запросом, коллекция доступна
+System.out.println(customer.getOrders().size());
+```
+
 ### Аннотации связей и важные параметры
+
+Сопоставление с типами связей из начала пункта:
+- **Один к одному** → `@OneToOne`
+- **Один ко многим** → `@OneToMany`
+- **Многие к одному** → `@ManyToOne`
+- **Многие ко многим** → `@ManyToMany`
 
 #### `@OneToOne`
 Частые параметры:
-- `fetch` (`LAZY`/`EAGER`),
-- `cascade`,
-- `optional` (может ли быть `null`),
-- `mappedBy` (на inverse side),
-- `orphanRemoval`.
+- `fetch` — стратегия загрузки (`LAZY`/`EAGER`).  
+  Рекомендация: чаще `LAZY`, `EAGER` только если связь нужна почти всегда.
+- `optional` — можно ли `null` в объектной модели.  
+  Обычно `false`, если в бизнес-правиле профиль обязателен.
+- `mappedBy` — имя поля-владельца на другой стороне (для inverse side).
+- `orphanRemoval` (`true/false`) — удалять ли «осиротевший» дочерний объект.
+- `cascade` — кратко: какие операции распространять (подробно в п. 9).
 
 ```java
 @OneToOne(fetch = FetchType.LAZY, cascade = CascadeType.ALL, optional = false)
@@ -89,9 +225,13 @@ private Profile profile;
 
 #### `@ManyToOne`
 Частые параметры:
-- `fetch`,
-- `optional`,
-- `cascade` (с осторожностью, особенно `REMOVE`).
+- `fetch` — часто явно ставят `LAZY`, чтобы не тащить «родителя» всегда.
+- `optional` — обязателен ли родитель (`false` => связь обязательна).
+- `@JoinColumn(name = "...", nullable = ..., foreignKey = ...)`:
+  - `name` — имя FK-колонки;
+  - `nullable` — допускается ли `NULL` в БД;
+  - `foreignKey` — имя FK-констрейнта (полезно для читаемых миграций/DDL).
+- `cascade` — обычно очень аккуратно; часто вообще не нужен на `ManyToOne`.
 
 ```java
 @ManyToOne(fetch = FetchType.LAZY, optional = false)
@@ -101,10 +241,13 @@ private Department department;
 
 #### `@OneToMany`
 Частые параметры:
-- `mappedBy` (очень часто обязателен для bidirectional),
-- `fetch`,
-- `cascade`,
-- `orphanRemoval`.
+- `mappedBy` — имя поля owner-стороны (почти всегда в bidirectional-модели).
+- `fetch` — обычно оставляют `LAZY` (это и так дефолт).
+- `orphanRemoval` — нужно ли удалять дочернюю сущность при удалении из коллекции.
+- `cascade` — часто `PERSIST/MERGE`, иногда `ALL` в агрегатах.
+- Тип коллекции:
+  - `List` — если важен порядок/дубликаты;
+  - `Set` — если нужна уникальность элементов.
 
 ```java
 @OneToMany(mappedBy = "department", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -112,7 +255,11 @@ private List<Employee> employees = new ArrayList<>();
 ```
 
 #### `@ManyToMany`
-Чаще всего задают через `@JoinTable`.
+Чаще всего задают через `@JoinTable`:
+- `name` — имя таблицы связи;
+- `joinColumns` — FK на текущую сущность;
+- `inverseJoinColumns` — FK на вторую сущность;
+- `mappedBy` — на обратной стороне bidirectional-связи.
 
 ```java
 @ManyToMany
@@ -125,6 +272,8 @@ private Set<Course> courses = new HashSet<>();
 ```
 
 > На практике для `@ManyToMany` нередко лучше вводить отдельную сущность-связку (например `Enrollment`), чтобы хранить атрибуты связи и лучше управлять жизненным циклом.
+>
+> Про каскады здесь — кратко; детальный разбор см. в п. 9.
 
 ---
 
